@@ -31,21 +31,26 @@ jobs:
         run: |
           CORE_VERSION=$(node -p "require('./jsonjsdb/package.json').version")
           BUILDER_VERSION=$(node -p "require('./jsonjsdb-builder/package.json').version")
+          PYTHON_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('jsonjsdb-py/pyproject.toml', 'rb'))['project']['version'])")
 
           echo "core_version=${CORE_VERSION}" >> "$GITHUB_OUTPUT"
           echo "builder_version=${BUILDER_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "python_version=${PYTHON_VERSION}" >> "$GITHUB_OUTPUT"
           echo "core_tag=jsonjsdb-v${CORE_VERSION}" >> "$GITHUB_OUTPUT"
           echo "builder_tag=jsonjsdb-builder-v${BUILDER_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "python_tag=jsonjsdb-py-v${PYTHON_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Check version changes
         id: changes
         run: |
           CORE_VERSION="${{ steps.versions.outputs.core_version }}"
           BUILDER_VERSION="${{ steps.versions.outputs.builder_version }}"
+          PYTHON_VERSION="${{ steps.versions.outputs.python_version }}"
 
           # Get latest releases for each package
           CORE_LATEST=$(gh release list --limit 50 --json tagName --jq '.[] | select(.tagName | startswith("jsonjsdb-v")) | .tagName' | head -1 || echo "")
           BUILDER_LATEST=$(gh release list --limit 50 --json tagName --jq '.[] | select(.tagName | startswith("jsonjsdb-builder-v")) | .tagName' | head -1 || echo "")
+          PYTHON_LATEST=$(gh release list --limit 50 --json tagName --jq '.[] | select(.tagName | startswith("jsonjsdb-py-v")) | .tagName' | head -1 || echo "")
 
           # Check core package
           if [[ -z "$CORE_LATEST" ]]; then
@@ -74,6 +79,21 @@ jobs:
             else
               echo "jsonjsdb-builder version unchanged (${BUILDER_VERSION})"
               echo "builder_changed=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+          # Check python package
+          if [[ -z "$PYTHON_LATEST" ]]; then
+            echo "No previous jsonjsdb-py releases found"
+            echo "python_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            PYTHON_LATEST_VERSION="${PYTHON_LATEST#jsonjsdb-py-v}"
+            if [[ "$PYTHON_VERSION" != "$PYTHON_LATEST_VERSION" ]]; then
+              echo "jsonjsdb-py version changed from ${PYTHON_LATEST_VERSION} to ${PYTHON_VERSION}"
+              echo "python_changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "jsonjsdb-py version unchanged (${PYTHON_VERSION})"
+              echo "python_changed=false" >> "$GITHUB_OUTPUT"
             fi
           fi
         env:
@@ -135,6 +155,33 @@ jobs:
             echo "notes=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Extract changelog for python
+        id: python_changelog
+        if: steps.changes.outputs.python_changed == 'true'
+        run: |
+          VERSION="${{ steps.versions.outputs.python_version }}"
+          CHANGELOG_FILE="jsonjsdb-py/CHANGELOG.md"
+
+          if [ -f "$CHANGELOG_FILE" ]; then
+            awk "
+            /^## ${VERSION} / { found=1; next }
+            /^## / && found { exit }
+            found { print }
+            " "$CHANGELOG_FILE" > python_changelog_section.md
+            
+            if [ ! -s python_changelog_section.md ]; then
+              echo "notes=" >> "$GITHUB_OUTPUT"
+            else
+              {
+                echo "notes<<EOF"
+                cat python_changelog_section.md
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "notes=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish jsonjsdb to npm
         if: steps.changes.outputs.core_changed == 'true'
         run: |
@@ -147,8 +194,21 @@ jobs:
           cd jsonjsdb-builder
           npm publish --access public --provenance
 
+      - name: Build Python package
+        if: steps.changes.outputs.python_changed == 'true'
+        run: |
+          pip install build
+          cd jsonjsdb-py
+          python -m build
+
+      - name: Publish jsonjsdb to PyPI
+        if: steps.changes.outputs.python_changed == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: jsonjsdb-py/dist/
+
       - name: Create git tags and releases
-        if: steps.changes.outputs.core_changed == 'true' || steps.changes.outputs.builder_changed == 'true'
+        if: steps.changes.outputs.core_changed == 'true' || steps.changes.outputs.builder_changed == 'true' || steps.changes.outputs.python_changed == 'true'
         run: |
           # Create tags and releases for changed packages
           if [[ "${{ steps.changes.outputs.core_changed }}" == "true" ]]; then
@@ -176,6 +236,22 @@ jobs:
             else
               gh release create "${BUILDER_TAG}" \
                 --title "jsonjsdb-builder ${{ steps.versions.outputs.builder_version }}" \
+                --generate-notes \
+                --latest=false
+            fi
+          fi
+
+          if [[ "${{ steps.changes.outputs.python_changed }}" == "true" ]]; then
+            PYTHON_TAG="${{ steps.versions.outputs.python_tag }}"
+            
+            if [[ "${{ steps.python_changelog.outputs.notes }}" != "" ]]; then
+              gh release create "${PYTHON_TAG}" \
+                --title "jsonjsdb (Python) ${{ steps.versions.outputs.python_version }}" \
+                --notes "${{ steps.python_changelog.outputs.notes }}" \
+                --latest=false
+            else
+              gh release create "${PYTHON_TAG}" \
+                --title "jsonjsdb (Python) ${{ steps.versions.outputs.python_version }}" \
                 --generate-notes \
                 --latest=false
             fi

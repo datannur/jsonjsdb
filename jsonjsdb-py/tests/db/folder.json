@@ -1,0 +1,6 @@
+[
+  {"id": "folder_1", "name": "Documents", "parent_id": null},
+  {"id": "folder_2", "name": "Projects", "parent_id": "folder_1"},
+  {"id": "folder_3", "name": "Archives", "parent_id": "folder_1"},
+  {"id": "folder_4", "name": "2024", "parent_id": "folder_3"}
+]

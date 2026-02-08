@@ -168,25 +168,83 @@ jobs:
         working-directory: jsonjsdb-builder
         run: npm pack --dry-run
 
+  test-python:
+    name: Test Python Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.14']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check python changes
+        id: python-changes
+        run: |
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            if git diff HEAD~1 HEAD --name-only | grep -E '^(jsonjsdb-py/|\.github/workflows/)'; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup uv
+        if: steps.python-changes.outputs.changed == 'true'
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install Python
+        if: steps.python-changes.outputs.changed == 'true'
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        if: steps.python-changes.outputs.changed == 'true'
+        working-directory: jsonjsdb-py
+        run: uv sync
+
+      - name: Run checks
+        if: steps.python-changes.outputs.changed == 'true'
+        working-directory: jsonjsdb-py
+        run: make check
+
+      - name: Generate coverage report
+        if: steps.python-changes.outputs.changed == 'true' && matrix.python-version == '3.14'
+        working-directory: jsonjsdb-py
+        run: uv run pytest --cov=src/jsonjsdb --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        if: steps.python-changes.outputs.changed == 'true' && matrix.python-version == '3.14'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: jsonjsdb-py/coverage.xml
+          flags: python
+          fail_ci_if_error: false
+
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [test-and-build-core, test-and-build-builder]
+    needs: [test-and-build-core, test-and-build-builder, test-python]
     if: always()
     steps:
       - name: Check CI success
         run: |
           echo "Core job result: ${{ needs.test-and-build-core.result }}"
           echo "Builder job result: ${{ needs.test-and-build-builder.result }}"
+          echo "Python job result: ${{ needs.test-python.result }}"
 
           # Check if any required job failed
-          if [[ "${{ needs.test-and-build-core.result }}" == "failure" || "${{ needs.test-and-build-builder.result }}" == "failure" ]]; then
+          if [[ "${{ needs.test-and-build-core.result }}" == "failure" || "${{ needs.test-and-build-builder.result }}" == "failure" || "${{ needs.test-python.result }}" == "failure" ]]; then
             echo "❌ CI failed - one or more jobs failed"
             exit 1
           fi
 
           # Check if any job was skipped (no changes detected)
-          if [[ "${{ needs.test-and-build-core.result }}" == "success" || "${{ needs.test-and-build-builder.result }}" == "success" ]]; then
+          if [[ "${{ needs.test-and-build-core.result }}" == "success" || "${{ needs.test-and-build-builder.result }}" == "success" || "${{ needs.test-python.result }}" == "success" ]]; then
             echo "✅ CI passed - all relevant packages tested successfully"
           else
             echo "ℹ️  No package changes detected - CI passes"
