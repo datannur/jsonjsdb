@@ -39,10 +39,11 @@
     "singleQuote": true
   },
   "devDependencies": {
-    "eslint": "^9.39.2",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.2",
     "jiti": "^2.6.1",
-    "prettier": "^3.7.4",
+    "prettier": "^3.8.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.51.0"
+    "typescript-eslint": "^8.56.1"
   }
 }

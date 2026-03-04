@@ -69,7 +69,7 @@ export function compareDatasets(
     datasetNew.map(item => [item.id as string | number, item]),
   )
 
-  let variables: string[] = []
+  let variables: string[]
   if (datasetOld.length === 0) variables = Object.keys(datasetNew[0])
   else if (datasetNew.length === 0) variables = Object.keys(datasetOld[0])
   else

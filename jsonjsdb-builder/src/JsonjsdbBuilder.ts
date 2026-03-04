@@ -205,7 +205,7 @@ export class JsonjsdbBuilder {
     if (files > 0) return outputDb
     const folders = items.filter(item => item.isDirectory())
     if (folders.length !== 1) return outputDb
-    return (outputDb = path.join(outputDb, folders[0].name))
+    return path.join(outputDb, folders[0].name)
   }
 
   private async deleteOldFiles(
