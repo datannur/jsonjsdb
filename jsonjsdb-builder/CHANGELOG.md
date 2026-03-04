@@ -1,5 +1,9 @@
 # jsonjsdb-builder
 
+## 0.6.8 (2026-03-04)
+
+- fix: update dependencies
+
 ## 0.6.7 (2026-01-04)
 
 - fix: update dependencies
