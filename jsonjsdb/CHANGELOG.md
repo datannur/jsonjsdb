@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.8.10 (2026-03-04)
+
+- fix: update dependencies
+
 ## 0.8.9 (2026-01-16)
 
 - fix: parentId not defined
