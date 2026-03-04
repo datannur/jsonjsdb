@@ -1,6 +1,6 @@
 {
   "name": "jsonjsdb-builder",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "description": "Jsonjsdb database builder",
   "type": "module",
   "license": "MIT",
