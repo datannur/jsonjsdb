@@ -176,7 +176,7 @@ export default class Loader {
     } catch (error) {
       const errorMsg = `Failed to load table "${tableName}" from "${url}": ${error}`
       console.error(errorMsg)
-      throw new Error(errorMsg)
+      throw new Error(errorMsg, { cause: error })
     }
   }
 

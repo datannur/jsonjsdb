@@ -1,0 +1,5 @@
+[
+  {"id": "user_1", "name": "Alice", "status": "active", "tag_ids": "tag_1,tag_2"},
+  {"id": "user_2", "name": "Bob", "status": "active", "tag_ids": "tag_1"},
+  {"id": "user_3", "name": "Charlie", "status": "inactive", "tag_ids": ""}
+]

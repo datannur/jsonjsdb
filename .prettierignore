@@ -1,2 +1,5 @@
 # Minified database files for performance
 **/*.json.js
+
+# Python package
+jsonjsdb-py/
