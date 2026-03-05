@@ -67,6 +67,11 @@ class Table(Generic[T]):
         """Number of rows in the table."""
         return self._df.height
 
+    @property
+    def is_empty(self) -> bool:
+        """Whether the table has no rows."""
+        return self._df.is_empty()
+
     def get_persistable_df(self) -> pl.DataFrame:
         """Return DataFrame with runtime_fields columns excluded."""
         if not self.runtime_fields:
@@ -99,6 +104,12 @@ class Table(Generic[T]):
         if result.is_empty():
             return None
         return self._row_to_entity(result.row(0, named=True))
+
+    def exists(self, id: ID) -> bool:
+        """Check if a row with the given ID exists."""
+        if self._df.is_empty() or "id" not in self._df.columns:
+            return False
+        return not self._df.filter(pl.col("id") == id).is_empty()
 
     def get_by(self, column: str, value: Any) -> T | None:
         """Get single row by column value, or None if not found."""
@@ -219,6 +230,20 @@ class Table(Generic[T]):
             self._df = new_df
         else:
             self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
+
+    def upsert(self, row: T) -> bool:
+        """Add or update a row. Returns True if added, False if updated."""
+        row_dict = self._entity_to_dict(row)
+        if "id" not in row_dict:
+            raise ValueError("Row must have an 'id' field")
+
+        row_id = str(row_dict["id"])
+        if self.exists(row_id):
+            self.update(row_id, **{k: v for k, v in row_dict.items() if k != "id"})
+            return False
+        else:
+            self.add(row)
+            return True
 
     def add_all(self, rows: list[T]) -> None:
         """Add multiple rows in a single batch operation."""

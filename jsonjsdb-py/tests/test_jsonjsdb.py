@@ -1151,3 +1151,81 @@ def test_ids_having_without_db_context():
     table: Table[dict] = Table("test")
     with pytest.raises(RuntimeError, match="without a database context"):
         _ = table.ids_having
+
+
+# =============================================================================
+# is_empty property tests
+# =============================================================================
+
+
+def test_is_empty_true():
+    """Should return True for empty table."""
+    table: Table[dict] = Table("test")
+    assert table.is_empty is True
+
+
+def test_is_empty_false():
+    """Should return False for non-empty table."""
+    db = Jsonjsdb(DB_PATH)
+    assert db["user"].is_empty is False
+
+
+# =============================================================================
+# exists() tests
+# =============================================================================
+
+
+def test_exists_found():
+    """Should return True when ID exists."""
+    db = Jsonjsdb(DB_PATH)
+    assert db["user"].exists("user_1") is True
+
+
+def test_exists_not_found():
+    """Should return False when ID not found."""
+    db = Jsonjsdb(DB_PATH)
+    assert db["user"].exists("nonexistent") is False
+
+
+def test_exists_empty_table():
+    """Should return False for empty table."""
+    table: Table[dict] = Table("test")
+    assert table.exists("any") is False
+
+
+# =============================================================================
+# upsert() tests
+# =============================================================================
+
+
+def test_upsert_add():
+    """Should add new row and return True."""
+    table: Table[dict] = Table("test")
+    result = table.upsert({"id": "1", "name": "New"})
+
+    assert result is True
+    assert table.count == 1
+    row = table.get("1")
+    assert row is not None
+    assert row["name"] == "New"
+
+
+def test_upsert_update():
+    """Should update existing row and return False."""
+    table: Table[dict] = Table("test")
+    table.add({"id": "1", "name": "Original"})
+
+    result = table.upsert({"id": "1", "name": "Updated"})
+
+    assert result is False
+    assert table.count == 1
+    row = table.get("1")
+    assert row is not None
+    assert row["name"] == "Updated"
+
+
+def test_upsert_missing_id():
+    """Should raise ValueError when row missing id."""
+    table: Table[dict] = Table("test")
+    with pytest.raises(ValueError, match="must have an 'id' field"):
+        table.upsert({"name": "No ID"})

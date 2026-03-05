@@ -2,6 +2,12 @@
 
 ## unreleased
 
+## 0.6.0
+
+add: `Table.is_empty` property - check if table has no rows
+add: `Table.exists(id)` - check if row exists without fetching it
+add: `Table.upsert(entity)` - add or update in single call (returns True if added, False if updated)
+
 ## 0.5.0
 
 add: `Table.get_by(column, value)` - lookup by column value (returns single entity or None)
