@@ -690,6 +690,20 @@ def test_runtime_fields_empty_set():
     assert persistable.columns == ["id", "a", "b"]
 
 
+def test_runtime_fields_via_init_parameter():
+    """Should accept runtime_fields as __init__ parameter."""
+    import polars as pl
+
+    table: Table[dict] = Table("test", runtime_fields={"_temp", "_cache"})
+    assert table.runtime_fields == {"_temp", "_cache"}
+
+    table._df = pl.DataFrame([{"id": "1", "name": "A", "_temp": 1, "_cache": 2}])
+    persistable = table.get_persistable_df()
+    assert "_temp" not in persistable.columns
+    assert "_cache" not in persistable.columns
+    assert "name" in persistable.columns
+
+
 def test_runtime_fields_get_persistable_df():
     """Should return filtered DataFrame via get_persistable_df()."""
     import polars as pl
