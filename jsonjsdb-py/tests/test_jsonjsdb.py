@@ -725,3 +725,65 @@ def test_runtime_fields_partial_match():
     assert "_seen" not in persistable.columns
     assert "_seen_count" in persistable.columns
     assert "seen" in persistable.columns
+
+
+# =============================================================================
+# Empty table tests (DataFrame without columns)
+# =============================================================================
+
+
+def test_empty_table_get_returns_none():
+    """Should return None when calling get() on table without columns."""
+
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
+
+    db = EmptyDB()
+    result = db.user.get("any_id")
+    assert result is None
+
+
+def test_empty_table_where_returns_empty_list():
+    """Should return empty list when calling where() on table without columns."""
+
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
+
+    db = EmptyDB()
+    result = db.user.where("name", "==", "test")
+    assert result == []
+
+
+def test_empty_table_having_returns_empty_list():
+    """Should return empty list when calling having on table without columns."""
+
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
+        email: Table[dict]
+
+    db = EmptyDB()
+    result = db.email.having.user("user_1")
+    assert result == []
+
+
+def test_empty_table_all_returns_empty_list():
+    """Should return empty list when calling all() on empty table."""
+
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
+
+    db = EmptyDB()
+    result = db.user.all()
+    assert result == []
+
+
+def test_standalone_empty_table_get():
+    """Should return None for get() on standalone empty Table."""
+    table: Table[dict] = Table("test")
+    assert table.get("any") is None
+
+
+def test_standalone_empty_table_where():
+    """Should return empty list for where() on standalone empty Table."""
+    table: Table[dict] = Table("test")
+    assert table.where("col", "==", "val") == []

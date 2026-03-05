@@ -63,6 +63,8 @@ class Table(Generic[T]):
 
     def get(self, id: ID) -> T | None:
         """Get a single row by ID, or None if not found."""
+        if self._df.is_empty() or "id" not in self._df.columns:
+            return None
         result = self._df.filter(pl.col("id") == id)
         if result.is_empty():
             return None
@@ -83,6 +85,8 @@ class Table(Generic[T]):
 
         Operators: ==, !=, >, >=, <, <=, in, is_null, is_not_null
         """
+        if self._df.is_empty() or column not in self._df.columns:
+            return []
         col = pl.col(column)
         expr: pl.Expr
 
@@ -222,6 +226,8 @@ class _RelationQuery(Generic[T]):
         self._target = target
 
     def __call__(self, id: ID) -> list[T]:
+        if self._table.df.is_empty():
+            return []
         columns = self._table.df.columns
 
         # Special case: 'parent' → parent_id (self-reference)
