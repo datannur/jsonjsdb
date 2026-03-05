@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
 import polars as pl
 
@@ -15,7 +15,16 @@ T = TypeVar("T")
 
 
 class Table(Generic[T]):
-    """A table backed by a Polars DataFrame."""
+    """A table backed by a Polars DataFrame.
+
+    Use runtime_fields to specify columns that should exist in memory
+    but never be persisted to JSON files:
+
+        class UserTable(Table[User]):
+            runtime_fields = {"_seen", "_processed"}
+    """
+
+    runtime_fields: ClassVar[set[str]] = set()
 
     def __init__(
         self,
@@ -34,6 +43,16 @@ class Table(Generic[T]):
     @property
     def df(self) -> pl.DataFrame:
         return self._df
+
+    def get_persistable_df(self) -> pl.DataFrame:
+        """Return DataFrame with runtime_fields columns excluded."""
+        if not self.runtime_fields:
+            return self._df
+
+        cols_to_keep = [
+            col for col in self._df.columns if col not in self.runtime_fields
+        ]
+        return self._df.select(cols_to_keep)
 
     @property
     def having(self) -> HavingProxy[T]:

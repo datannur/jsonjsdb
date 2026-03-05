@@ -101,9 +101,10 @@ class Jsonjsdb:
 
         table_names = []
         for name, table in self._tables.items():
-            if not table.df.is_empty():
-                write_table_json(table.df, save_path / f"{name}.json")
-                write_table_jsonjs(table.df, name, save_path / f"{name}.json.js")
+            persistable_df = table.get_persistable_df()
+            if not persistable_df.is_empty():
+                write_table_json(persistable_df, save_path / f"{name}.json")
+                write_table_jsonjs(persistable_df, name, save_path / f"{name}.json.js")
                 table_names.append(name)
 
         write_table_index(table_names, save_path / "__table__.json")
