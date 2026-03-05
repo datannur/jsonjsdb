@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
 
 import polars as pl
@@ -17,15 +18,19 @@ T = TypeVar("T")
 class Table(Generic[T]):
     """A table backed by a Polars DataFrame.
 
+    Supports dataclass entities for ergonomic access (entity.name vs entity["name"]):
+
+        @dataclass
+        class User:
+            id: str
+            name: str
+
+        table = Table("user", entity_type=User)
+        user = table.get("u1")  # → User dataclass
+        print(user.name)
+
     Use runtime_fields to specify columns that should exist in memory
-    but never be persisted to JSON files:
-
-        # Option 1: Per instance
-        table.runtime_fields = {"_seen", "_processed"}
-
-        # Option 2: Subclass default
-        class UserTable(Table[User]):
-            runtime_fields = {"_seen", "_processed"}
+    but never be persisted to JSON files.
     """
 
     runtime_fields: set[str] = set()
@@ -36,10 +41,12 @@ class Table(Generic[T]):
         db: Jsonjsdb | None = None,
         df: pl.DataFrame | None = None,
         runtime_fields: set[str] | None = None,
+        entity_type: type[T] | None = None,
     ) -> None:
         self._name = name
         self._db = db
         self._df = df if df is not None else pl.DataFrame()
+        self._entity_type = entity_type
         if runtime_fields is not None:
             self.runtime_fields = runtime_fields
         elif type(self).runtime_fields is not Table.runtime_fields:
@@ -77,11 +84,11 @@ class Table(Generic[T]):
         result = self._df.filter(pl.col("id") == id)
         if result.is_empty():
             return None
-        return self._row_to_dict(result.row(0, named=True))
+        return self._row_to_entity(result.row(0, named=True))
 
     def all(self) -> list[T]:
-        """Get all rows as a list of dicts."""
-        return [self._row_to_dict(row) for row in self._df.iter_rows(named=True)]
+        """Get all rows as a list of entities."""
+        return [self._row_to_entity(row) for row in self._df.iter_rows(named=True)]
 
     @overload
     def where(self, column: str, op: Operator, value: Any) -> list[T]: ...
@@ -119,17 +126,27 @@ class Table(Generic[T]):
             raise ValueError(f"Unknown operator: {op}")
 
         result = self._df.filter(expr)
-        return [self._row_to_dict(row) for row in result.iter_rows(named=True)]
+        return [self._row_to_entity(row) for row in result.iter_rows(named=True)]
 
-    def _row_to_dict(self, row: dict[str, Any]) -> T:
-        """Convert a Polars row dict to API dict (T)."""
+    def _row_to_entity(self, row: dict[str, Any]) -> T:
+        """Convert a Polars row dict to entity (dataclass or dict)."""
+        if self._entity_type is not None and dataclasses.is_dataclass(
+            self._entity_type
+        ):
+            return self._entity_type(**row)
         return row  # type: ignore[return-value]
 
     # --- CRUD operations ---
 
+    def _entity_to_dict(self, entity: T) -> dict[str, Any]:
+        """Convert entity (dataclass or dict) to dict."""
+        if dataclasses.is_dataclass(entity) and not isinstance(entity, type):
+            return dataclasses.asdict(entity)
+        return entity  # type: ignore[return-value]
+
     def add(self, row: T) -> None:
         """Add a single row. Raises ValueError if id missing or already exists."""
-        row_dict: dict[str, Any] = row  # type: ignore[assignment]
+        row_dict = self._entity_to_dict(row)
 
         if "id" not in row_dict:
             raise ValueError("Row must have an 'id' field")
@@ -248,7 +265,7 @@ class _RelationQuery(Generic[T]):
         if fk_ids_col in columns:
             result = self._table.df.filter(pl.col(fk_ids_col).list.contains(id))
             return [
-                self._table._row_to_dict(row) for row in result.iter_rows(named=True)
+                self._table._row_to_entity(row) for row in result.iter_rows(named=True)
             ]
 
         raise AttributeError(
