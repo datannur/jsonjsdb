@@ -136,6 +136,54 @@ db.user.add({...})
 db.save("path/to/db")    # Path required on first save
 ```
 
+### Evolution Tracking
+
+Changes are automatically tracked when saving. An `evolution.json` file logs all additions, deletions, and updates:
+
+```python
+# Tracking enabled by default
+db.save()
+
+# Disable tracking
+db.save(track_evolution=False)
+
+# Use Excel as source (for easy editing of logs)
+db.save(evolution_xlsx=Path("path/to/evolution.xlsx"))
+```
+
+When `evolution_xlsx` is provided:
+- The xlsx file becomes the source of truth (read from xlsx if it exists)
+- User edits made in Excel are preserved on subsequent saves
+- Both `evolution.json` and `evolution.xlsx` are written to stay in sync
+
+Evolution format:
+```json
+[
+  {
+    "timestamp": 1741186800,
+    "type": "add",
+    "entity": "user",
+    "entity_id": "user_2",
+    "parent_entity_id": null,
+    "variable": null,
+    "old_value": null,
+    "new_value": null,
+    "name": null
+  },
+  {
+    "timestamp": 1741186800,
+    "type": "update",
+    "entity": "user",
+    "entity_id": "user_1",
+    "parent_entity_id": null,
+    "variable": "score",
+    "old_value": 100,
+    "new_value": 200,
+    "name": null
+  }
+]
+```
+
 ### Runtime Fields
 
 Exclude fields from persistence (in-memory only):
@@ -162,6 +210,7 @@ table.get_persistable_df()        # → DataFrame without _seen
 - `__table__.json` — Index of tables with metadata
 - `{table}.json` — Data as array of objects
 - `{table}.json.js` — Same data for browser (JavaScript)
+- `evolution.json` — Change history (auto-generated on save)
 
 ### Column Conventions
 

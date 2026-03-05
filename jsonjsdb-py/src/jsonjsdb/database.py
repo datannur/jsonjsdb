@@ -5,6 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, get_type_hints
 
+import polars as pl
+
+from .evolution import (
+    EvolutionEntry,
+    compare_datasets,
+    get_timestamp,
+    load_evolution,
+    save_evolution,
+)
 from .loader import load_table, load_table_index
 from .table import Table
 from .types import TableRow
@@ -30,6 +39,7 @@ class Jsonjsdb:
     def __init__(self, path: str | Path | None = None) -> None:
         self._path: Path | None = Path(path) if path else None
         self._tables: dict[str, Table[Any]] = {}
+        self._original_snapshots: dict[str, pl.DataFrame] = {}
 
         if self._path:
             self._load_from_path(self._path)
@@ -54,6 +64,7 @@ class Jsonjsdb:
             if json_path.exists():
                 df = load_table(json_path)
                 self._tables[name] = Table(name, self, df)
+                self._original_snapshots[name] = df.clone()
 
     def _init_typed_tables(self) -> None:
         """Initialize Table attributes from type annotations on subclasses."""
@@ -84,11 +95,22 @@ class Jsonjsdb:
         """List of loaded table names."""
         return list(self._tables.keys())
 
-    def save(self, path: str | Path | None = None) -> None:
-        """Save all tables to disk.
+    def save(
+        self,
+        path: str | Path | None = None,
+        *,
+        track_evolution: bool = True,
+        evolution_xlsx: Path | str | None = None,
+    ) -> None:
+        """Save all tables to disk with optional evolution tracking.
 
         If path is provided, saves to that location and updates self._path.
         If path is None, saves to the original path (must exist).
+
+        Args:
+            path: Target directory path (optional if already loaded from path)
+            track_evolution: Enable change tracking (default: True)
+            evolution_xlsx: Optional path for evolution.xlsx output
         """
         save_path = Path(path) if path else self._path
 
@@ -99,14 +121,56 @@ class Jsonjsdb:
 
         save_path.mkdir(parents=True, exist_ok=True)
 
+        # Check if saving to same path (can use in-memory snapshots)
+        same_path = (
+            self._path is not None and save_path.resolve() == self._path.resolve()
+        )
+
+        timestamp = get_timestamp()
+        new_entries: list[EvolutionEntry] = []
+
         table_names = []
         for name, table in self._tables.items():
             persistable_df = table.get_persistable_df()
-            if not persistable_df.is_empty():
-                write_table_json(persistable_df, save_path / f"{name}.json")
-                write_table_jsonjs(persistable_df, name, save_path / f"{name}.json.js")
-                table_names.append(name)
+            if persistable_df.is_empty():
+                continue
+
+            # Track evolution if enabled
+            if track_evolution:
+                old_df = self._get_old_table(save_path, name, same_path)
+                entries = compare_datasets(old_df, persistable_df, timestamp, name)
+                new_entries.extend(entries)
+
+            write_table_json(persistable_df, save_path / f"{name}.json")
+            write_table_jsonjs(persistable_df, name, save_path / f"{name}.json.js")
+            table_names.append(name)
+
+            # Update snapshot for next comparison
+            self._original_snapshots[name] = persistable_df.clone()
+
+        # Save evolution if there are new entries
+        if track_evolution and new_entries:
+            xlsx_path = Path(evolution_xlsx) if evolution_xlsx else None
+            existing_entries = load_evolution(save_path, xlsx_path)
+            all_entries = existing_entries + new_entries
+            save_evolution(all_entries, save_path, xlsx_path)
+            if "evolution" not in table_names:
+                table_names.append("evolution")
 
         write_table_index(table_names, save_path / "__table__.json")
 
         self._path = save_path
+
+    def _get_old_table(self, path: Path, name: str, use_snapshot: bool) -> pl.DataFrame:
+        """Get old table data for comparison.
+
+        Uses in-memory snapshot if available and saving to same path,
+        otherwise loads from disk.
+        """
+        if use_snapshot and name in self._original_snapshots:
+            return self._original_snapshots[name]
+
+        json_path = path / f"{name}.json"
+        if not json_path.exists():
+            return pl.DataFrame()
+        return load_table(json_path)
