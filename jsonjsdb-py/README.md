@@ -88,11 +88,14 @@ table.add(User(id="u2", name="Bob", tag_ids=[]))
 ```python
 db.user.add({"id": "u1", "name": "Alice", ...})  # Add row (id required)
 db.user.add_all([...])                           # Add multiple rows (batch)
+db.user.upsert({"id": "u1", ...})                # Add or update → bool (True=added)
 
 db.user.get("u1")                                # → User | None
 db.user.get_by("email", "alice@test.com")        # → User | None (by column)
+db.user.exists("u1")                             # → bool
 db.user.all()                                    # → list[User]
 db.user.count                                    # → int (number of rows)
+db.user.is_empty                                 # → bool
 
 db.user.update("u1", name="New Name")            # Update fields
 db.user.update_many(["u1", "u2"], status="x")   # Batch update → int (count)
