@@ -1,5 +1,9 @@
 # jsonjsdb-builder
 
+## 0.6.9 (2026-03-05)
+
+- fix: bump version (0.6.8 was unpublished from npm)
+
 ## 0.6.8 (2026-03-04)
 
 - fix: update dependencies
