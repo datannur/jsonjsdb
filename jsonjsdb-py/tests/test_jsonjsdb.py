@@ -636,3 +636,92 @@ def test_typed_db_with_non_table_hints():
     # Only Table hints should be processed
     assert "user" in db.tables
     assert db.user.name == "user"
+
+
+# --- runtime_fields tests ---
+
+
+def test_runtime_fields_excluded_on_save(tmp_path: Path):
+    """Should exclude runtime_fields columns when saving."""
+    import polars as pl
+
+    class ItemTable(Table[dict]):
+        runtime_fields = {"_seen", "_processed"}
+
+    # Create table with runtime fields
+    table = ItemTable("item")
+    table._df = pl.DataFrame(
+        [{"id": "1", "name": "Test", "_seen": True, "_processed": False}]
+    )
+
+    # Runtime fields exist in memory
+    item = table.get("1")
+    assert item is not None
+    assert item["_seen"] is True
+    assert item["_processed"] is False
+
+    # Persistable df excludes runtime fields
+    persistable = table.get_persistable_df()
+    assert "_seen" not in persistable.columns
+    assert "_processed" not in persistable.columns
+    assert "name" in persistable.columns
+
+    # Simulate save via writer
+    from jsonjsdb.writer import write_table_json
+
+    write_table_json(persistable, tmp_path / "item.json")
+
+    # Verify saved file
+    saved = json.loads((tmp_path / "item.json").read_text())
+    assert saved[0]["name"] == "Test"
+    assert "_seen" not in saved[0]
+    assert "_processed" not in saved[0]
+
+
+def test_runtime_fields_empty_set():
+    """Should keep all columns when runtime_fields is empty."""
+    table: Table[dict] = Table("test")
+    assert table.runtime_fields == set()
+
+    import polars as pl
+
+    table._df = pl.DataFrame([{"id": "1", "a": 1, "b": 2}])
+    persistable = table.get_persistable_df()
+    assert persistable.columns == ["id", "a", "b"]
+
+
+def test_runtime_fields_get_persistable_df():
+    """Should return filtered DataFrame via get_persistable_df()."""
+    import polars as pl
+
+    class MyTable(Table[dict]):
+        runtime_fields = {"_temp"}
+
+    table = MyTable("test")
+    table._df = pl.DataFrame([{"id": "1", "name": "A", "_temp": 123}])
+
+    # Full df still has runtime fields
+    assert "_temp" in table.df.columns
+
+    # Persistable df excludes them
+    persistable = table.get_persistable_df()
+    assert "_temp" not in persistable.columns
+    assert "name" in persistable.columns
+
+
+def test_runtime_fields_partial_match():
+    """Should only exclude exact matches, not partial."""
+    import polars as pl
+
+    class ItemTable(Table[dict]):
+        runtime_fields = {"_seen"}
+
+    table = ItemTable("item")
+    table._df = pl.DataFrame(
+        [{"id": "1", "_seen": True, "_seen_count": 5, "seen": "yes"}]
+    )
+
+    persistable = table.get_persistable_df()
+    assert "_seen" not in persistable.columns
+    assert "_seen_count" in persistable.columns
+    assert "seen" in persistable.columns

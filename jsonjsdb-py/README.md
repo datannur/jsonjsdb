@@ -101,6 +101,24 @@ db.user.add({...})
 db.save("path/to/db")    # Path required on first save
 ```
 
+### Runtime Fields
+
+Exclude fields from persistence (in-memory only):
+
+```python
+from jsonjsdb import Table
+
+class UserTable(Table[User]):
+    runtime_fields = {"_seen", "_processed"}
+
+table = UserTable("user")
+table.add({"id": "1", "name": "Alice", "_seen": True})
+
+table.get("1")["_seen"]           # → True (in memory)
+table.get_persistable_df()        # → DataFrame without _seen
+# On save(), runtime_fields are automatically excluded
+```
+
 ## File Format
 
 - `__table__.json` — Index of tables with metadata
