@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
 
 import polars as pl
 
@@ -20,21 +20,32 @@ class Table(Generic[T]):
     Use runtime_fields to specify columns that should exist in memory
     but never be persisted to JSON files:
 
+        # Option 1: Per instance
+        table.runtime_fields = {"_seen", "_processed"}
+
+        # Option 2: Subclass default
         class UserTable(Table[User]):
             runtime_fields = {"_seen", "_processed"}
     """
 
-    runtime_fields: ClassVar[set[str]] = set()
+    runtime_fields: set[str] = set()
 
     def __init__(
         self,
         name: str,
         db: Jsonjsdb | None = None,
         df: pl.DataFrame | None = None,
+        runtime_fields: set[str] | None = None,
     ) -> None:
         self._name = name
         self._db = db
         self._df = df if df is not None else pl.DataFrame()
+        if runtime_fields is not None:
+            self.runtime_fields = runtime_fields
+        elif type(self).runtime_fields is not Table.runtime_fields:
+            self.runtime_fields = type(self).runtime_fields.copy()
+        else:
+            self.runtime_fields = set()
 
     @property
     def name(self) -> str:
