@@ -47,57 +47,46 @@ jobs:
           BUILDER_VERSION="${{ steps.versions.outputs.builder_version }}"
           PYTHON_VERSION="${{ steps.versions.outputs.python_version }}"
 
-          # Get latest releases for each package
-          CORE_LATEST=$(gh release list --limit 50 --json tagName --jq '.[] | select(.tagName | startswith("jsonjsdb-v")) | .tagName' | head -1 || echo "")
-          BUILDER_LATEST=$(gh release list --limit 50 --json tagName --jq '.[] | select(.tagName | startswith("jsonjsdb-builder-v")) | .tagName' | head -1 || echo "")
-          PYTHON_LATEST=$(gh release list --limit 50 --json tagName --jq '.[] | select(.tagName | startswith("jsonjsdb-py-v")) | .tagName' | head -1 || echo "")
+          # Check npm for existing versions (source of truth)
+          CORE_NPM=$(npm view jsonjsdb version 2>/dev/null || echo "")
+          BUILDER_NPM=$(npm view jsonjsdb-builder version 2>/dev/null || echo "")
+          PYTHON_PYPI=$(pip index versions jsonjsdb 2>/dev/null | grep -oP 'jsonjsdb \(\K[^)]+' || echo "")
 
           # Check core package
-          if [[ -z "$CORE_LATEST" ]]; then
-            echo "No previous jsonjsdb releases found"
+          if [[ -z "$CORE_NPM" ]]; then
+            echo "jsonjsdb not found on npm - first release"
+            echo "core_changed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$CORE_VERSION" != "$CORE_NPM" ]]; then
+            echo "jsonjsdb version changed from ${CORE_NPM} to ${CORE_VERSION}"
             echo "core_changed=true" >> "$GITHUB_OUTPUT"
           else
-            CORE_LATEST_VERSION="${CORE_LATEST#jsonjsdb-v}"
-            if [[ "$CORE_VERSION" != "$CORE_LATEST_VERSION" ]]; then
-              echo "jsonjsdb version changed from ${CORE_LATEST_VERSION} to ${CORE_VERSION}"
-              echo "core_changed=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "jsonjsdb version unchanged (${CORE_VERSION})"
-              echo "core_changed=false" >> "$GITHUB_OUTPUT"
-            fi
+            echo "jsonjsdb version unchanged (${CORE_VERSION})"
+            echo "core_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
           # Check builder package
-          if [[ -z "$BUILDER_LATEST" ]]; then
-            echo "No previous jsonjsdb-builder releases found"
+          if [[ -z "$BUILDER_NPM" ]]; then
+            echo "jsonjsdb-builder not found on npm - first release"
+            echo "builder_changed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$BUILDER_VERSION" != "$BUILDER_NPM" ]]; then
+            echo "jsonjsdb-builder version changed from ${BUILDER_NPM} to ${BUILDER_VERSION}"
             echo "builder_changed=true" >> "$GITHUB_OUTPUT"
           else
-            BUILDER_LATEST_VERSION="${BUILDER_LATEST#jsonjsdb-builder-v}"
-            if [[ "$BUILDER_VERSION" != "$BUILDER_LATEST_VERSION" ]]; then
-              echo "jsonjsdb-builder version changed from ${BUILDER_LATEST_VERSION} to ${BUILDER_VERSION}"
-              echo "builder_changed=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "jsonjsdb-builder version unchanged (${BUILDER_VERSION})"
-              echo "builder_changed=false" >> "$GITHUB_OUTPUT"
-            fi
+            echo "jsonjsdb-builder version unchanged (${BUILDER_VERSION})"
+            echo "builder_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
           # Check python package
-          if [[ -z "$PYTHON_LATEST" ]]; then
-            echo "No previous jsonjsdb-py releases found"
+          if [[ -z "$PYTHON_PYPI" ]]; then
+            echo "jsonjsdb not found on PyPI - first release"
+            echo "python_changed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$PYTHON_VERSION" != "$PYTHON_PYPI" ]]; then
+            echo "jsonjsdb-py version changed from ${PYTHON_PYPI} to ${PYTHON_VERSION}"
             echo "python_changed=true" >> "$GITHUB_OUTPUT"
           else
-            PYTHON_LATEST_VERSION="${PYTHON_LATEST#jsonjsdb-py-v}"
-            if [[ "$PYTHON_VERSION" != "$PYTHON_LATEST_VERSION" ]]; then
-              echo "jsonjsdb-py version changed from ${PYTHON_LATEST_VERSION} to ${PYTHON_VERSION}"
-              echo "python_changed=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "jsonjsdb-py version unchanged (${PYTHON_VERSION})"
-              echo "python_changed=false" >> "$GITHUB_OUTPUT"
-            fi
+            echo "jsonjsdb-py version unchanged (${PYTHON_VERSION})"
+            echo "python_changed=false" >> "$GITHUB_OUTPUT"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract changelog for core
         id: core_changelog
