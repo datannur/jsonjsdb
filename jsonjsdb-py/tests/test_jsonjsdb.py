@@ -1,6 +1,7 @@
 """Tests for jsonjsdb package - Phase 1: Reading."""
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, TypedDict
 
@@ -42,6 +43,13 @@ class TypedDB(Jsonjsdb):
     tag: Table[Tag]
     email: Table[Email]
     folder: Table[Folder]
+
+
+# Dataclass for entity_type tests
+@dataclass
+class TagEntity:
+    id: str
+    label: str
 
 
 def test_version_exists():
@@ -801,3 +809,212 @@ def test_standalone_empty_table_where():
     """Should return empty list for where() on standalone empty Table."""
     table: Table[dict] = Table("test")
     assert table.where("col", "==", "val") == []
+
+
+# =============================================================================
+# count property tests
+# =============================================================================
+
+
+def test_count_property():
+    """Should return number of rows in table."""
+    db = Jsonjsdb(DB_PATH)
+    assert db["user"].count == 3
+    assert db["tag"].count == 3
+
+
+def test_count_empty_table():
+    """Should return 0 for empty table."""
+    table: Table[dict] = Table("test")
+    assert table.count == 0
+
+
+# =============================================================================
+# update_many tests
+# =============================================================================
+
+
+def test_update_many():
+    """Should update multiple rows at once."""
+    db = Jsonjsdb(DB_PATH)
+    updated = db["user"].update_many(["user_1", "user_2"], status="updated")
+
+    assert updated == 2
+    user1 = db["user"].get("user_1")
+    user2 = db["user"].get("user_2")
+    assert user1 is not None and user1["status"] == "updated"
+    assert user2 is not None and user2["status"] == "updated"
+
+
+def test_update_many_partial():
+    """Should update only existing IDs and return actual count."""
+    db = Jsonjsdb(DB_PATH)
+    updated = db["user"].update_many(["user_1", "nonexistent"], status="changed")
+
+    assert updated == 1
+    user1 = db["user"].get("user_1")
+    assert user1 is not None and user1["status"] == "changed"
+
+
+def test_update_many_empty_table():
+    """Should return 0 for empty table."""
+    table: Table[dict] = Table("test")
+    updated = table.update_many(["id1", "id2"], name="test")
+    assert updated == 0
+
+
+def test_update_many_no_matches():
+    """Should return 0 when no IDs match."""
+    db = Jsonjsdb(DB_PATH)
+    updated = db["user"].update_many(["nonexistent1", "nonexistent2"], status="x")
+    assert updated == 0
+
+
+# =============================================================================
+# ids_where tests
+# =============================================================================
+
+
+def test_ids_where():
+    """Should return IDs matching condition."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["user"].ids_where("status", "==", "active")
+    assert "user_1" in ids
+
+
+def test_ids_where_empty_result():
+    """Should return empty list when no matches."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["user"].ids_where("status", "==", "nonexistent")
+    assert ids == []
+
+
+def test_ids_where_empty_table():
+    """Should return empty list for empty table."""
+    table: Table[dict] = Table("test")
+    ids = table.ids_where("col", "==", "val")
+    assert ids == []
+
+
+def test_ids_where_is_null():
+    """Should work with is_null operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["folder"].ids_where("parent_id", "is_null")
+    assert "folder_1" in ids
+
+
+def test_ids_where_not_equals():
+    """Should work with != operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["user"].ids_where("status", "!=", "active")
+    assert "user_3" in ids
+
+
+def test_ids_where_greater_than():
+    """Should work with > operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["folder"].ids_where("id", ">", "folder_1")
+    assert "folder_2" in ids
+
+
+def test_ids_where_greater_equal():
+    """Should work with >= operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["folder"].ids_where("id", ">=", "folder_2")
+    assert "folder_2" in ids
+
+
+def test_ids_where_less_than():
+    """Should work with < operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["folder"].ids_where("id", "<", "folder_2")
+    assert "folder_1" in ids
+
+
+def test_ids_where_less_equal():
+    """Should work with <= operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["folder"].ids_where("id", "<=", "folder_1")
+    assert "folder_1" in ids
+
+
+def test_ids_where_in():
+    """Should work with in operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["user"].ids_where("id", "in", ["user_1", "user_2"])
+    assert "user_1" in ids
+    assert "user_2" in ids
+
+
+def test_ids_where_is_not_null():
+    """Should work with is_not_null operator."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["folder"].ids_where("parent_id", "is_not_null")
+    assert "folder_2" in ids
+
+
+def test_ids_where_invalid_operator():
+    """Should raise ValueError for invalid operator."""
+    db = Jsonjsdb(DB_PATH)
+    with pytest.raises(ValueError, match="Unknown operator"):
+        db["user"].ids_where("status", "invalid", "x")  # type: ignore[arg-type]
+
+
+# =============================================================================
+# remove_where tests
+# =============================================================================
+
+
+def test_remove_where():
+    """Should remove rows matching condition."""
+    db = Jsonjsdb(DB_PATH)
+    removed = db["user"].remove_where("status", "==", "active")
+
+    assert removed >= 1
+    assert db["user"].ids_where("status", "==", "active") == []
+
+
+def test_remove_where_no_matches():
+    """Should return 0 when no matches."""
+    db = Jsonjsdb(DB_PATH)
+    removed = db["user"].remove_where("status", "==", "nonexistent")
+    assert removed == 0
+
+
+def test_remove_where_empty_table():
+    """Should return 0 for empty table."""
+    table: Table[dict] = Table("test")
+    removed = table.remove_where("col", "==", "val")
+    assert removed == 0
+
+
+# =============================================================================
+# entity_type with dataclass tests
+# =============================================================================
+
+
+def test_entity_type_get_returns_dataclass():
+    """Should return dataclass instance when entity_type is set."""
+    from jsonjsdb.loader import load_table
+
+    df = load_table(DB_PATH / "tag.json")
+    table: Table[TagEntity] = Table("tag", df=df, entity_type=TagEntity)
+
+    tag = table.get("tag_1")
+    assert tag is not None
+    assert isinstance(tag, TagEntity)
+    assert tag.id == "tag_1"
+    assert tag.label == "Python"
+
+
+def test_entity_type_add_dataclass():
+    """Should accept dataclass instance in add()."""
+    table: Table[TagEntity] = Table("tag", entity_type=TagEntity)
+
+    tag = TagEntity(id="new_tag", label="New Label")
+    table.add(tag)
+
+    result = table.get("new_tag")
+    assert result is not None
+    assert result.id == "new_tag"
+    assert result.label == "New Label"

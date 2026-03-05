@@ -91,10 +91,13 @@ db.user.add_all([...])                           # Add multiple rows
 
 db.user.get("u1")                                # → User | None
 db.user.all()                                    # → list[User]
+db.user.count                                    # → int (number of rows)
 
 db.user.update("u1", name="New Name")            # Update fields
+db.user.update_many(["u1", "u2"], status="x")   # Batch update → int (count)
 db.user.remove("u1")                             # → bool
 db.user.remove_all(["u1", "u2"])                 # → int (count)
+db.user.remove_where("status", "==", "inactive") # → int (count)
 ```
 
 ### Filtering
@@ -104,6 +107,8 @@ db.user.where("status", "==", "active")          # Equality
 db.user.where("age", ">", 18)                    # Comparison (>, >=, <, <=)
 db.user.where("status", "in", ["a", "b"])        # In list
 db.user.where("email", "is_null")                # Null check (is_not_null)
+
+db.user.ids_where("status", "==", "active")      # → list[str] (IDs only, faster)
 ```
 
 ### Relations
