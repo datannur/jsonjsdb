@@ -19,6 +19,9 @@ from .table import Table
 from .types import TableRow
 from .writer import write_table_index, write_table_json, write_table_jsonjs
 
+# Internal tables that should not be loaded as user data
+INTERNAL_TABLES = {"evolution", "__table__"}
+
 
 class Jsonjsdb:
     """JSONJS database with typed table access.
@@ -59,6 +62,8 @@ class Jsonjsdb:
 
         for entry in table_index:
             name = str(entry["name"])
+            if name in INTERNAL_TABLES:
+                continue
             json_path = path / f"{name}.json"
 
             if json_path.exists():

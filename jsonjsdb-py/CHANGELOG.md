@@ -2,6 +2,10 @@
 
 ## unreleased
 
+## 0.7.1
+
+fix: Skip internal tables (`evolution`, `__table__`) when loading database
+
 ## 0.7.0
 
 add: Evolution tracking - automatic change detection (add/delete/update) on `save()`
