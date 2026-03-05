@@ -1,6 +1,7 @@
 """Tests for jsonjsdb package - Phase 1: Reading."""
 
 import json
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, TypedDict
@@ -1229,3 +1230,25 @@ def test_upsert_missing_id():
     table: Table[dict] = Table("test")
     with pytest.raises(ValueError, match="must have an 'id' field"):
         table.upsert({"name": "No ID"})
+
+
+def test_internal_tables_not_loaded():
+    """Should skip evolution and __table__ when loading database."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir)
+
+        # First save creates evolution.json
+        db1 = Jsonjsdb()
+        db1._tables["user"] = Table("user", db1)
+        db1["user"].add({"id": "1", "name": "Test"})
+        db1.save(path)
+
+        # Verify evolution.json was created
+        assert (path / "evolution.json").exists()
+
+        # Reload - evolution and __table__ should NOT be in _tables
+        db2 = Jsonjsdb(path)
+        assert "evolution" not in db2._tables
+        assert "__table__" not in db2._tables
+        assert "user" in db2._tables
+        assert db2.tables == ["user"]
