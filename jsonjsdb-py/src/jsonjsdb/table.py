@@ -84,6 +84,13 @@ class Table(Generic[T]):
             raise RuntimeError("Cannot use 'having' without a database context")
         return HavingProxy(self, self._db)
 
+    @property
+    def ids_having(self) -> IdsHavingProxy:
+        """Access relational queries returning IDs only via ids_having.{table}(id)."""
+        if self._db is None:
+            raise RuntimeError("Cannot use 'ids_having' without a database context")
+        return IdsHavingProxy(self, self._db)
+
     def get(self, id: ID) -> T | None:
         """Get a single row by ID, or None if not found."""
         if self._df.is_empty() or "id" not in self._df.columns:
@@ -92,6 +99,11 @@ class Table(Generic[T]):
         if result.is_empty():
             return None
         return self._row_to_entity(result.row(0, named=True))
+
+    def get_by(self, column: str, value: Any) -> T | None:
+        """Get single row by column value, or None if not found."""
+        results = self.where(column, "==", value)
+        return results[0] if results else None
 
     def all(self) -> list[T]:
         """Get all rows as a list of entities."""
@@ -209,9 +221,33 @@ class Table(Generic[T]):
             self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
 
     def add_all(self, rows: list[T]) -> None:
-        """Add multiple rows."""
-        for row in rows:
-            self.add(row)
+        """Add multiple rows in a single batch operation."""
+        if not rows:
+            return
+
+        dicts = [self._entity_to_dict(r) for r in rows]
+
+        for d in dicts:
+            if "id" not in d:
+                raise ValueError("Row must have an 'id' field")
+
+        new_ids = {str(d["id"]) for d in dicts}
+        if len(new_ids) != len(dicts):
+            raise ValueError("Duplicate IDs in rows to add")
+
+        if not self._df.is_empty():
+            existing = set(self._df["id"].to_list())
+            conflicts = new_ids & existing
+            if conflicts:
+                raise ValueError(f"IDs already exist: {conflicts}")
+
+        prepared = [self._prepare_row_for_storage(d) for d in dicts]
+        new_df = pl.DataFrame(prepared)
+
+        if self._df.is_empty():
+            self._df = new_df
+        else:
+            self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
 
     def update(self, id: ID, **kwargs: Any) -> None:
         """Update a row by ID. Raises KeyError if not found."""
@@ -314,6 +350,17 @@ class HavingProxy(Generic[T]):
         return _RelationQuery(self._table, self._db, target)
 
 
+class IdsHavingProxy:
+    """Proxy for relational queries returning IDs: table.ids_having.{target}(id)."""
+
+    def __init__(self, table: Table[Any], db: Jsonjsdb) -> None:
+        self._table = table
+        self._db = db
+
+    def __getattr__(self, target: str) -> _IdsRelationQuery:
+        return _IdsRelationQuery(self._table, self._db, target)
+
+
 class _RelationQuery(Generic[T]):
     """Callable that executes the relation query."""
 
@@ -342,6 +389,36 @@ class _RelationQuery(Generic[T]):
             return [
                 self._table._row_to_entity(row) for row in result.iter_rows(named=True)
             ]
+
+        raise AttributeError(
+            f"No relation '{self._target}' found in table '{self._table.name}'. "
+            f"Expected column '{fk_col}' or '{fk_ids_col}'."
+        )
+
+
+class _IdsRelationQuery:
+    """Callable that executes the relation query and returns IDs."""
+
+    def __init__(self, table: Table[Any], db: Jsonjsdb, target: str) -> None:
+        self._table = table
+        self._db = db
+        self._target = target
+
+    def __call__(self, id: ID) -> list[ID]:
+        if self._table.df.is_empty():
+            return []
+        columns = self._table.df.columns
+
+        lookup_target = "parent" if self._target == "parent" else self._target
+
+        fk_col = f"{lookup_target}_id"
+        if fk_col in columns:
+            return self._table.ids_where(fk_col, "==", id)
+
+        fk_ids_col = f"{lookup_target}_ids"
+        if fk_ids_col in columns:
+            result = self._table.df.filter(pl.col(fk_ids_col).list.contains(id))
+            return result["id"].to_list()
 
         raise AttributeError(
             f"No relation '{self._target}' found in table '{self._table.name}'. "

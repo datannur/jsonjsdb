@@ -2,6 +2,12 @@
 
 ## unreleased
 
+## 0.5.0
+
+add: `Table.get_by(column, value)` - lookup by column value (returns single entity or None)
+add: `Table.ids_having.{relation}(id)` - relational query returning IDs only
+perf: `Table.add_all()` now batch inserts in single Polars concat (was N individual inserts)
+
 ## 0.4.0
 
 add: `Table.count` property - returns number of rows
