@@ -690,6 +690,20 @@ def test_runtime_fields_empty_set():
     assert persistable.columns == ["id", "a", "b"]
 
 
+def test_runtime_fields_via_init_parameter():
+    """Should accept runtime_fields as __init__ parameter."""
+    import polars as pl
+
+    table: Table[dict] = Table("test", runtime_fields={"_temp", "_cache"})
+    assert table.runtime_fields == {"_temp", "_cache"}
+
+    table._df = pl.DataFrame([{"id": "1", "name": "A", "_temp": 1, "_cache": 2}])
+    persistable = table.get_persistable_df()
+    assert "_temp" not in persistable.columns
+    assert "_cache" not in persistable.columns
+    assert "name" in persistable.columns
+
+
 def test_runtime_fields_get_persistable_df():
     """Should return filtered DataFrame via get_persistable_df()."""
     import polars as pl
@@ -725,3 +739,133 @@ def test_runtime_fields_partial_match():
     assert "_seen" not in persistable.columns
     assert "_seen_count" in persistable.columns
     assert "seen" in persistable.columns
+
+
+# --- Dataclass support tests ---
+
+
+def test_dataclass_get_returns_dataclass():
+    """Should return dataclass instance when entity_type is set."""
+    import polars as pl
+    from dataclasses import dataclass
+
+    @dataclass
+    class Item:
+        id: str
+        name: str
+        count: int
+
+    table: Table[Item] = Table("item", entity_type=Item)
+    table._df = pl.DataFrame([{"id": "1", "name": "Test", "count": 42}])
+
+    item = table.get("1")
+    assert item is not None
+    assert isinstance(item, Item)
+    assert item.id == "1"
+    assert item.name == "Test"
+    assert item.count == 42
+
+
+def test_dataclass_all_returns_list_of_dataclasses():
+    """Should return list of dataclass instances."""
+    import polars as pl
+    from dataclasses import dataclass
+
+    @dataclass
+    class Item:
+        id: str
+        name: str
+
+    table: Table[Item] = Table("item", entity_type=Item)
+    table._df = pl.DataFrame(
+        [
+            {"id": "1", "name": "A"},
+            {"id": "2", "name": "B"},
+        ]
+    )
+
+    items = table.all()
+    assert len(items) == 2
+    assert all(isinstance(item, Item) for item in items)
+    assert items[0].name == "A"
+    assert items[1].name == "B"
+
+
+def test_dataclass_where_returns_dataclasses():
+    """Should return dataclass instances from where()."""
+    import polars as pl
+    from dataclasses import dataclass
+
+    @dataclass
+    class Item:
+        id: str
+        category: str
+
+    table: Table[Item] = Table("item", entity_type=Item)
+    table._df = pl.DataFrame(
+        [
+            {"id": "1", "category": "A"},
+            {"id": "2", "category": "B"},
+            {"id": "3", "category": "A"},
+        ]
+    )
+
+    results = table.where("category", "==", "A")
+    assert len(results) == 2
+    assert all(isinstance(r, Item) for r in results)
+
+
+def test_dataclass_add_accepts_dataclass():
+    """Should accept dataclass instance in add()."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Item:
+        id: str
+        name: str
+
+    table: Table[Item] = Table("item", entity_type=Item)
+    table.add(Item(id="1", name="Test"))
+
+    item = table.get("1")
+    assert item is not None
+    assert item.name == "Test"
+
+
+def test_dataclass_add_all_accepts_dataclasses():
+    """Should accept list of dataclass instances in add_all()."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class Item:
+        id: str
+        name: str
+
+    table: Table[Item] = Table("item", entity_type=Item)
+    table.add_all(
+        [
+            Item(id="1", name="A"),
+            Item(id="2", name="B"),
+        ]
+    )
+
+    assert len(table.all()) == 2
+
+
+def test_dataclass_with_list_field():
+    """Should handle dataclass with list fields."""
+    import polars as pl
+    from dataclasses import dataclass
+
+    @dataclass
+    class User:
+        id: str
+        name: str
+        tag_ids: list[str]
+
+    table: Table[User] = Table("user", entity_type=User)
+    table._df = pl.DataFrame([{"id": "u1", "name": "Alice", "tag_ids": ["t1", "t2"]}])
+
+    user = table.get("u1")
+    assert user is not None
+    assert user.tag_ids == ["t1", "t2"]

@@ -41,6 +41,8 @@ db.save()
 
 ## Typed Access
 
+### With TypedDict (dict-style)
+
 ```python
 from typing import TypedDict
 from jsonjsdb import Jsonjsdb, Table
@@ -54,7 +56,29 @@ class MyDB(Jsonjsdb):
     user: Table[User]
 
 db = MyDB("path/to/db")
-user = db.user.get("user_1")  # Returns User | None (with autocompletion)
+user = db.user.get("user_1")  # Returns User | None
+print(user["name"])           # Dict-style access
+```
+
+### With Dataclass (attribute-style)
+
+```python
+from dataclasses import dataclass
+from jsonjsdb import Jsonjsdb, Table
+
+@dataclass
+class User:
+    id: str
+    name: str
+    tag_ids: list[str]
+
+# Pass entity_type to get dataclass instances
+table: Table[User] = Table("user", entity_type=User)
+
+user = table.get("user_1")    # Returns User dataclass
+print(user.name)              # Attribute-style access
+
+table.add(User(id="u2", name="Bob", tag_ids=[]))
 ```
 
 ## API Reference
@@ -108,10 +132,13 @@ Exclude fields from persistence (in-memory only):
 ```python
 from jsonjsdb import Table
 
+# Option 1: Via constructor
+table: Table[dict] = Table("user", runtime_fields={"_seen", "_processed"})
+
+# Option 2: Via subclass
 class UserTable(Table[User]):
     runtime_fields = {"_seen", "_processed"}
 
-table = UserTable("user")
 table.add({"id": "1", "name": "Alice", "_seen": True})
 
 table.get("1")["_seen"]           # → True (in memory)
