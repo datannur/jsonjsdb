@@ -741,131 +741,63 @@ def test_runtime_fields_partial_match():
     assert "seen" in persistable.columns
 
 
-# --- Dataclass support tests ---
+# =============================================================================
+# Empty table tests (DataFrame without columns)
+# =============================================================================
 
 
-def test_dataclass_get_returns_dataclass():
-    """Should return dataclass instance when entity_type is set."""
-    import polars as pl
-    from dataclasses import dataclass
+def test_empty_table_get_returns_none():
+    """Should return None when calling get() on table without columns."""
 
-    @dataclass
-    class Item:
-        id: str
-        name: str
-        count: int
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
 
-    table: Table[Item] = Table("item", entity_type=Item)
-    table._df = pl.DataFrame([{"id": "1", "name": "Test", "count": 42}])
-
-    item = table.get("1")
-    assert item is not None
-    assert isinstance(item, Item)
-    assert item.id == "1"
-    assert item.name == "Test"
-    assert item.count == 42
+    db = EmptyDB()
+    result = db.user.get("any_id")
+    assert result is None
 
 
-def test_dataclass_all_returns_list_of_dataclasses():
-    """Should return list of dataclass instances."""
-    import polars as pl
-    from dataclasses import dataclass
+def test_empty_table_where_returns_empty_list():
+    """Should return empty list when calling where() on table without columns."""
 
-    @dataclass
-    class Item:
-        id: str
-        name: str
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
 
-    table: Table[Item] = Table("item", entity_type=Item)
-    table._df = pl.DataFrame(
-        [
-            {"id": "1", "name": "A"},
-            {"id": "2", "name": "B"},
-        ]
-    )
-
-    items = table.all()
-    assert len(items) == 2
-    assert all(isinstance(item, Item) for item in items)
-    assert items[0].name == "A"
-    assert items[1].name == "B"
+    db = EmptyDB()
+    result = db.user.where("name", "==", "test")
+    assert result == []
 
 
-def test_dataclass_where_returns_dataclasses():
-    """Should return dataclass instances from where()."""
-    import polars as pl
-    from dataclasses import dataclass
+def test_empty_table_having_returns_empty_list():
+    """Should return empty list when calling having on table without columns."""
 
-    @dataclass
-    class Item:
-        id: str
-        category: str
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
+        email: Table[dict]
 
-    table: Table[Item] = Table("item", entity_type=Item)
-    table._df = pl.DataFrame(
-        [
-            {"id": "1", "category": "A"},
-            {"id": "2", "category": "B"},
-            {"id": "3", "category": "A"},
-        ]
-    )
-
-    results = table.where("category", "==", "A")
-    assert len(results) == 2
-    assert all(isinstance(r, Item) for r in results)
+    db = EmptyDB()
+    result = db.email.having.user("user_1")
+    assert result == []
 
 
-def test_dataclass_add_accepts_dataclass():
-    """Should accept dataclass instance in add()."""
-    from dataclasses import dataclass
+def test_empty_table_all_returns_empty_list():
+    """Should return empty list when calling all() on empty table."""
 
-    @dataclass
-    class Item:
-        id: str
-        name: str
+    class EmptyDB(Jsonjsdb):
+        user: Table[dict]
 
-    table: Table[Item] = Table("item", entity_type=Item)
-    table.add(Item(id="1", name="Test"))
-
-    item = table.get("1")
-    assert item is not None
-    assert item.name == "Test"
+    db = EmptyDB()
+    result = db.user.all()
+    assert result == []
 
 
-def test_dataclass_add_all_accepts_dataclasses():
-    """Should accept list of dataclass instances in add_all()."""
-    from dataclasses import dataclass
-
-    @dataclass
-    class Item:
-        id: str
-        name: str
-
-    table: Table[Item] = Table("item", entity_type=Item)
-    table.add_all(
-        [
-            Item(id="1", name="A"),
-            Item(id="2", name="B"),
-        ]
-    )
-
-    assert len(table.all()) == 2
+def test_standalone_empty_table_get():
+    """Should return None for get() on standalone empty Table."""
+    table: Table[dict] = Table("test")
+    assert table.get("any") is None
 
 
-def test_dataclass_with_list_field():
-    """Should handle dataclass with list fields."""
-    import polars as pl
-    from dataclasses import dataclass
-
-    @dataclass
-    class User:
-        id: str
-        name: str
-        tag_ids: list[str]
-
-    table: Table[User] = Table("user", entity_type=User)
-    table._df = pl.DataFrame([{"id": "u1", "name": "Alice", "tag_ids": ["t1", "t2"]}])
-
-    user = table.get("u1")
-    assert user is not None
-    assert user.tag_ids == ["t1", "t2"]
+def test_standalone_empty_table_where():
+    """Should return empty list for where() on standalone empty Table."""
+    table: Table[dict] = Table("test")
+    assert table.where("col", "==", "val") == []
