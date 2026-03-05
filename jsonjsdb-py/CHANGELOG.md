@@ -2,6 +2,14 @@
 
 ## unreleased
 
+## 0.7.0
+
+add: Evolution tracking - automatic change detection (add/delete/update) on `save()`
+add: `evolution_xlsx` parameter - use Excel as source for easy log editing
+add: `track_evolution` parameter - opt-out of tracking (enabled by default)
+add: `EvolutionEntry` dataclass and `compare_datasets()` exported from package
+dep: `openpyxl>=3.1.0` now a required dependency
+
 ## 0.6.0
 
 add: `Table.is_empty` property - check if table has no rows
