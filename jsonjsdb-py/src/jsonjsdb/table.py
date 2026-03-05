@@ -62,6 +62,11 @@ class Table(Generic[T]):
     def df(self) -> pl.DataFrame:
         return self._df
 
+    @property
+    def count(self) -> int:
+        """Number of rows in the table."""
+        return self._df.height
+
     def get_persistable_df(self) -> pl.DataFrame:
         """Return DataFrame with runtime_fields columns excluded."""
         if not self.runtime_fields:
@@ -132,6 +137,39 @@ class Table(Generic[T]):
         result = self._df.filter(expr)
         return [self._row_to_entity(row) for row in result.iter_rows(named=True)]
 
+    def ids_where(self, column: str, op: Operator, value: Any = None) -> list[ID]:
+        """Return IDs of rows matching condition (no entity conversion).
+
+        More efficient than [x.id for x in table.where(...)] when only IDs are needed.
+        """
+        if self._df.is_empty() or column not in self._df.columns:
+            return []
+        col = pl.col(column)
+        expr: pl.Expr
+
+        if op == "==":
+            expr = col == value
+        elif op == "!=":
+            expr = col != value
+        elif op == ">":
+            expr = col > value
+        elif op == ">=":
+            expr = col >= value
+        elif op == "<":
+            expr = col < value
+        elif op == "<=":
+            expr = col <= value
+        elif op == "in":
+            expr = col.is_in(value)
+        elif op == "is_null":
+            expr = col.is_null()
+        elif op == "is_not_null":
+            expr = col.is_not_null()
+        else:
+            raise ValueError(f"Unknown operator: {op}")
+
+        return self._df.filter(expr)["id"].to_list()
+
     def _row_to_entity(self, row: dict[str, Any]) -> T:
         """Convert a Polars row dict to entity (dataclass or dict)."""
         if self._entity_type is not None and dataclasses.is_dataclass(
@@ -195,6 +233,32 @@ class Table(Generic[T]):
 
         self._df = self._df.select(updates)
 
+    def update_many(self, ids: list[ID], **kwargs: Any) -> int:
+        """Update multiple rows by ID. Returns count of updated rows."""
+        if self._df.is_empty():
+            return 0
+
+        mask = pl.col("id").is_in(ids)
+        count = self._df.filter(mask).height
+        if count == 0:
+            return 0
+
+        updates: list[pl.Expr] = []
+        for col_name in self._df.columns:
+            if col_name in kwargs:
+                value = kwargs[col_name]
+                updates.append(
+                    pl.when(mask)
+                    .then(pl.lit(value, allow_object=True))
+                    .otherwise(pl.col(col_name))
+                    .alias(col_name)
+                )
+            else:
+                updates.append(pl.col(col_name))
+
+        self._df = self._df.select(updates)
+        return count
+
     def remove(self, id: ID) -> bool:
         """Remove a row by ID. Returns True if removed, False if not found."""
         if self._df.is_empty():
@@ -212,6 +276,11 @@ class Table(Generic[T]):
         original_len = len(self._df)
         self._df = self._df.filter(~pl.col("id").is_in(ids))
         return original_len - len(self._df)
+
+    def remove_where(self, column: str, op: Operator, value: Any = None) -> int:
+        """Remove rows matching condition. Returns count of removed rows."""
+        ids = self.ids_where(column, op, value)
+        return self.remove_all(ids)
 
     def _prepare_row_for_storage(self, row: dict[str, Any]) -> dict[str, Any]:
         """Prepare row for internal DataFrame storage.

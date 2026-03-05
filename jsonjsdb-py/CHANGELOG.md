@@ -2,6 +2,13 @@
 
 ## unreleased
 
+## 0.4.0
+
+add: `Table.count` property - returns number of rows
+add: `Table.update_many(ids, **kwargs)` - batch update multiple rows by ID
+add: `Table.ids_where(col, op, value)` - returns IDs matching condition without entity conversion
+add: `Table.remove_where(col, op, value)` - removes rows matching condition
+
 ## 0.3.2
 
 fix: `Table.add()` now uses `how="diagonal_relaxed"` for `pl.concat` to handle type coercion when adding rows to tables with Null-typed columns
