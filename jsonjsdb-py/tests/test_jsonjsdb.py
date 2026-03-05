@@ -1018,3 +1018,136 @@ def test_entity_type_add_dataclass():
     assert result is not None
     assert result.id == "new_tag"
     assert result.label == "New Label"
+
+
+# =============================================================================
+# get_by tests
+# =============================================================================
+
+
+def test_get_by_found():
+    """Should return single row matching column value."""
+    db = Jsonjsdb(DB_PATH)
+    user = db["user"].get_by("name", "Alice")
+    assert user is not None
+    assert user["id"] == "user_1"
+
+
+def test_get_by_not_found():
+    """Should return None when no match."""
+    db = Jsonjsdb(DB_PATH)
+    user = db["user"].get_by("name", "NonExistent")
+    assert user is None
+
+
+def test_get_by_empty_table():
+    """Should return None for empty table."""
+    table: Table[dict] = Table("test")
+    result = table.get_by("col", "val")
+    assert result is None
+
+
+# =============================================================================
+# add_all batch tests
+# =============================================================================
+
+
+def test_add_all_batch():
+    """Should add multiple rows in single batch."""
+    table: Table[dict] = Table("test")
+    rows = [
+        {"id": "1", "name": "A"},
+        {"id": "2", "name": "B"},
+        {"id": "3", "name": "C"},
+    ]
+    table.add_all(rows)
+
+    assert table.count == 3
+    assert table.get("1") is not None
+    assert table.get("2") is not None
+    assert table.get("3") is not None
+
+
+def test_add_all_empty_list():
+    """Should handle empty list."""
+    table: Table[dict] = Table("test")
+    table.add_all([])
+    assert table.count == 0
+
+
+def test_add_all_duplicate_in_input():
+    """Should raise ValueError for duplicate IDs in input."""
+    table: Table[dict] = Table("test")
+    rows = [{"id": "1", "name": "A"}, {"id": "1", "name": "B"}]
+    with pytest.raises(ValueError, match="Duplicate IDs"):
+        table.add_all(rows)
+
+
+def test_add_all_conflict_with_existing():
+    """Should raise ValueError when ID already exists."""
+    table: Table[dict] = Table("test")
+    table.add({"id": "1", "name": "Existing"})
+
+    with pytest.raises(ValueError, match="IDs already exist"):
+        table.add_all([{"id": "1", "name": "Conflict"}, {"id": "2", "name": "New"}])
+
+
+def test_add_all_missing_id():
+    """Should raise ValueError when row missing id."""
+    table: Table[dict] = Table("test")
+    with pytest.raises(ValueError, match="must have an 'id' field"):
+        table.add_all([{"name": "No ID"}])
+
+
+# =============================================================================
+# ids_having tests
+# =============================================================================
+
+
+def test_ids_having_one_to_many():
+    """Should return IDs for one-to-many relation."""
+    db = Jsonjsdb(DB_PATH)
+    email_ids = db["email"].ids_having.user("user_1")
+    assert isinstance(email_ids, list)
+    assert len(email_ids) >= 1
+    assert all(isinstance(id, str) for id in email_ids)
+
+
+def test_ids_having_many_to_many():
+    """Should return IDs for many-to-many relation."""
+    db = Jsonjsdb(DB_PATH)
+    user_ids = db["user"].ids_having.tag("tag_1")
+    assert isinstance(user_ids, list)
+    assert "user_1" in user_ids
+
+
+def test_ids_having_empty_result():
+    """Should return empty list when no matches."""
+    db = Jsonjsdb(DB_PATH)
+    ids = db["email"].ids_having.user("nonexistent")
+    assert ids == []
+
+
+def test_ids_having_empty_table():
+    """Should return empty list for empty table."""
+
+    class EmptyDB(Jsonjsdb):
+        email: Table[dict]
+
+    db = EmptyDB()
+    ids = db.email.ids_having.user("user_1")
+    assert ids == []
+
+
+def test_ids_having_invalid_relation():
+    """Should raise AttributeError for invalid relation."""
+    db = Jsonjsdb(DB_PATH)
+    with pytest.raises(AttributeError, match="No relation"):
+        db["user"].ids_having.nonexistent("x")
+
+
+def test_ids_having_without_db_context():
+    """Should raise RuntimeError when no database context."""
+    table: Table[dict] = Table("test")
+    with pytest.raises(RuntimeError, match="without a database context"):
+        _ = table.ids_having

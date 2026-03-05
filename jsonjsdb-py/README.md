@@ -87,9 +87,10 @@ table.add(User(id="u2", name="Bob", tag_ids=[]))
 
 ```python
 db.user.add({"id": "u1", "name": "Alice", ...})  # Add row (id required)
-db.user.add_all([...])                           # Add multiple rows
+db.user.add_all([...])                           # Add multiple rows (batch)
 
 db.user.get("u1")                                # → User | None
+db.user.get_by("email", "alice@test.com")        # → User | None (by column)
 db.user.all()                                    # → list[User]
 db.user.count                                    # → int (number of rows)
 
@@ -117,6 +118,8 @@ db.user.ids_where("status", "==", "active")      # → list[str] (IDs only, fast
 db.email.having.user("user_1")      # One-to-many: where user_id == "user_1"
 db.user.having.tag("tag_1")         # Many-to-many: where tag_ids contains "tag_1"
 db.folder.having.parent("folder_1") # Hierarchy: where parent_id == "folder_1"
+
+db.email.ids_having.user("user_1")  # Same as above, returns IDs only (faster)
 ```
 
 ### Save / New Database
