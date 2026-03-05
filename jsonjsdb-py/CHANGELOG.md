@@ -2,6 +2,10 @@
 
 ## unreleased
 
+## 0.3.2
+
+fix: `Table.add()` now uses `how="diagonal_relaxed"` for `pl.concat` to handle type coercion when adding rows to tables with Null-typed columns
+
 ## 0.3.1
 
 fix: `get()`, `where()`, and `having` now handle empty tables gracefully (return `None`/`[]` instead of `ColumnNotFoundError`)

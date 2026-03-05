@@ -168,7 +168,7 @@ class Table(Generic[T]):
         if self._df.is_empty():
             self._df = new_df
         else:
-            self._df = pl.concat([self._df, new_df], how="diagonal")
+            self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
 
     def add_all(self, rows: list[T]) -> None:
         """Add multiple rows."""
