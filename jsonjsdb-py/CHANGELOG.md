@@ -2,6 +2,10 @@
 
 ## unreleased
 
+## 0.2.1
+
+fix: `Table.runtime_fields` typing - now an instance attribute instead of `ClassVar`
+
 ## 0.2.0
 
 add: `runtime_fields` - exclude fields from persistence (in-memory only)
