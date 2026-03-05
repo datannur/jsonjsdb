@@ -2,6 +2,10 @@
 
 ## unreleased
 
+## 0.7.2
+
+fix: Skip tracking for initial creation (no previous data to compare)
+
 ## 0.7.1
 
 fix: Skip internal tables (`evolution`, `__table__`) when loading database

@@ -625,8 +625,8 @@ class TestEdgeCases:
         entity_ids = {r.entity_id for r in result}
         assert entity_ids == {"1", "2"}
 
-    def test_all_rows_added_to_empty(self):
-        """Should detect when rows are added to empty table."""
+    def test_initial_creation_not_tracked(self):
+        """Should not track changes when old table is empty (initial creation)."""
         old_df = pl.DataFrame({"id": [], "name": []}).cast(
             {"id": pl.Utf8, "name": pl.Utf8}
         )
@@ -634,8 +634,8 @@ class TestEdgeCases:
 
         result = compare_datasets(old_df, new_df, 1234567890, "user")
 
-        assert len(result) == 2
-        assert all(r.type == "add" for r in result)
+        # No entries generated for initial creation
+        assert len(result) == 0
 
     def test_df_to_dict_by_id_skips_null_ids(self):
         """Should skip rows with null id values."""
