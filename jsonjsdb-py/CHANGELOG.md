@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2
+
+fix: `parent_entity_id` now correct for tables with composite ID (was using first segment instead of FK value)
+
 ## 0.8.1
 
 fix: `__table__.json` now includes itself in the list (align with JS behavior)

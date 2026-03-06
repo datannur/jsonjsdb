@@ -215,12 +215,8 @@ def compare_datasets(
                         if has_composite_id
                         else entity_id
                     ),
-                    parent_entity_id=(
-                        str(entity_id).split("---")[0]
-                        if has_composite_id
-                        else parent_id
-                    ),
-                    parent_entity=None if has_composite_id else parent_entity,
+                    parent_entity_id=parent_id,
+                    parent_entity=parent_entity,
                     variable=variable,
                     old_value=old_value,
                     new_value=new_value,
@@ -240,10 +236,8 @@ def compare_datasets(
                 entity_id=(
                     _standardize_id(str(entity_id)) if has_composite_id else entity_id
                 ),
-                parent_entity_id=(
-                    str(entity_id).split("---")[0] if has_composite_id else parent_id
-                ),
-                parent_entity=None if has_composite_id else parent_entity,
+                parent_entity_id=parent_id,
+                parent_entity=parent_entity,
                 variable=None,
                 old_value=None,
                 new_value=None,
@@ -263,10 +257,8 @@ def compare_datasets(
                 entity_id=(
                     _standardize_id(str(entity_id)) if has_composite_id else entity_id
                 ),
-                parent_entity_id=(
-                    str(entity_id).split("---")[0] if has_composite_id else parent_id
-                ),
-                parent_entity=None if has_composite_id else parent_entity,
+                parent_entity_id=parent_id,
+                parent_entity=parent_entity,
                 variable=None,
                 old_value=None,
                 new_value=None,

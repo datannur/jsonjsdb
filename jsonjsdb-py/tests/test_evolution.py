@@ -147,7 +147,33 @@ class TestCompositeId:
         assert len(result) == 1
         assert result[0].type == "add"
         assert "---" in str(result[0].entity_id)
-        assert result[0].parent_entity_id == "Jane"
+        # No FK column -> parent_entity_id is None
+        assert result[0].parent_entity_id is None
+
+    def test_composite_id_with_fk_column(self):
+        """Should use FK column for parent_entity_id with composite id."""
+        old_df = pl.DataFrame({"variable_id": ["var_1"], "value": ["A"], "freq": [5]})
+        new_df = pl.DataFrame(
+            {
+                "variable_id": ["var_1", "var_2"],
+                "value": ["A", "B"],
+                "freq": [5, 10],
+            }
+        )
+
+        result = compare_datasets(
+            old_df,
+            new_df,
+            1234567890,
+            "freq",
+            parent_relations={"freq": "variable"},
+        )
+
+        assert len(result) == 1
+        assert result[0].type == "add"
+        assert result[0].entity_id == "var_2---B"
+        assert result[0].parent_entity_id == "var_2"
+        assert result[0].parent_entity == "variable"
 
     def test_insufficient_columns_raises_error(self):
         """Should raise error when not enough columns for composite id."""
