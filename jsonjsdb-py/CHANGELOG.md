@@ -1,6 +1,8 @@
 # Changelog
 
-## unreleased
+## 0.7.3
+
+add: Optional `timestamp` parameter on `save()` for deterministic outputs
 
 ## 0.7.2
 

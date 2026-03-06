@@ -149,6 +149,9 @@ db.save(track_evolution=False)
 
 # Use Excel as source (for easy editing of logs)
 db.save(evolution_xlsx=Path("path/to/evolution.xlsx"))
+
+# Override timestamp for deterministic outputs (useful for testing)
+db.save(timestamp=1741186800)
 ```
 
 When `evolution_xlsx` is provided:
