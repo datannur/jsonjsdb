@@ -126,8 +126,11 @@ def compare_datasets(
     if entity.startswith("__"):
         return entries
 
-    if old_df.is_empty() and new_df.is_empty():
+    # Skip tracking for initial creation (no previous data)
+    if old_df.is_empty():
         return entries
+
+    # Normalize IDs for consistent comparison
 
     # Normalize id columns to string for consistent comparison
     old_df = _normalize_id_column(old_df)

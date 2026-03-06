@@ -1237,13 +1237,16 @@ def test_internal_tables_not_loaded():
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir)
 
-        # First save creates evolution.json
+        # First save - no evolution.json (initial creation not tracked)
         db1 = Jsonjsdb()
         db1._tables["user"] = Table("user", db1)
         db1["user"].add({"id": "1", "name": "Test"})
         db1.save(path)
+        assert not (path / "evolution.json").exists()
 
-        # Verify evolution.json was created
+        # Modify and save again - evolution.json now created
+        db1["user"].update("1", name="Updated")
+        db1.save(path)
         assert (path / "evolution.json").exists()
 
         # Reload - evolution and __table__ should NOT be in _tables
