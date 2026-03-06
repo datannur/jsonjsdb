@@ -10,6 +10,7 @@ import polars as pl
 from .evolution import (
     EvolutionEntry,
     compare_datasets,
+    filter_cascade_entries,
     get_timestamp,
     load_evolution,
     save_evolution,
@@ -108,6 +109,7 @@ class Jsonjsdb:
         evolution_xlsx: Path | str | None = None,
         timestamp: int | None = None,
         write_js: bool = True,
+        parent_relations: dict[str, str] | None = None,
     ) -> None:
         """Save all tables to disk with optional evolution tracking.
 
@@ -120,6 +122,8 @@ class Jsonjsdb:
             evolution_xlsx: Optional path for evolution.xlsx output
             timestamp: Optional timestamp override for deterministic outputs
             write_js: If True, write both .json and .json.js (default: True)
+            parent_relations: Child->parent table mapping for cascade filtering
+                Example: {"variable": "dataset", "freq": "variable"}
         """
         save_path = Path(path) if path else self._path
 
@@ -147,7 +151,9 @@ class Jsonjsdb:
             # Track evolution if enabled
             if track_evolution:
                 old_df = self._get_old_table(save_path, name, same_path)
-                entries = compare_datasets(old_df, persistable_df, ts, name)
+                entries = compare_datasets(
+                    old_df, persistable_df, ts, name, parent_relations
+                )
                 new_entries.extend(entries)
 
             write_table_json(persistable_df, save_path / f"{name}.json")
@@ -159,6 +165,10 @@ class Jsonjsdb:
             self._original_snapshots[name] = persistable_df.clone()
 
         # Save evolution if there are new entries
+        if track_evolution and new_entries:
+            # Filter cascade entries (child add/delete when parent has same operation)
+            new_entries = filter_cascade_entries(new_entries)
+
         if track_evolution and new_entries:
             xlsx_path = Path(evolution_xlsx) if evolution_xlsx else None
             existing_entries = load_evolution(save_path, xlsx_path)
