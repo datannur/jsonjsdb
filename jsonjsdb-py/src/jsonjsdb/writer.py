@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import polars as pl
 
@@ -33,9 +33,17 @@ def write_table_jsonjs(df: pl.DataFrame, table_name: str, path: Path) -> None:
         f.write(content)
 
 
-def write_table_index(tables: list[str], path: Path) -> None:
-    """Write __table__.json with table metadata."""
-    now = int(time.time())
+def write_table_index(
+    tables: list[str], path: Path, timestamp: Optional[int] = None
+) -> None:
+    """Write __table__.json with table metadata.
+
+    Args:
+        tables: List of table names to include
+        path: Path to write __table__.json
+        timestamp: Optional timestamp override (uses current time if None)
+    """
+    now = timestamp if timestamp is not None else int(time.time())
     entries = [{"name": name, "last_modif": now} for name in sorted(tables)]
 
     with open(path, "w") as f:
