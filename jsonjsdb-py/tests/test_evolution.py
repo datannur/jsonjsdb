@@ -10,8 +10,9 @@ import pytest
 from jsonjsdb import Jsonjsdb, Table, EvolutionEntry
 from jsonjsdb.evolution import (
     compare_datasets,
+    filter_cascade_entries,
     _standardize_id,
-    _get_first_parent_id,
+    _get_parent_info,
     _df_to_dict_by_id,
     load_evolution,
     load_evolution_xlsx,
@@ -172,24 +173,49 @@ class TestParentEntityId:
         assert len(result) == 1
         assert result[0].type == "delete"
         assert result[0].parent_entity_id == 20
+        assert result[0].parent_entity == "company"
 
-    def test_get_first_parent_id_no_fk_column(self):
+    def test_get_parent_info_no_fk_column(self):
         """Should return None when no FK column exists."""
         row = {"id": 1, "name": "test", "score": 100}
-        assert _get_first_parent_id(row) is None
+        parent_entity, parent_id = _get_parent_info(row, "user", None)
+        assert parent_entity is None
+        assert parent_id is None
 
-    def test_get_first_parent_id_non_str_int_value(self):
-        """Should return None when FK value is not str or int."""
+    def test_get_parent_info_non_str_int_value(self):
+        """Should return None for parent_id when FK value is not str or int."""
         row = {"id": 1, "name": "test", "company_id": None}
-        assert _get_first_parent_id(row) is None
+        parent_entity, parent_id = _get_parent_info(row, "user", None)
+        assert parent_entity is None
+        assert parent_id is None
 
         row2 = {"id": 1, "name": "test", "company_id": ["list", "value"]}
-        assert _get_first_parent_id(row2) is None
+        parent_entity2, parent_id2 = _get_parent_info(row2, "user", None)
+        assert parent_entity2 is None
+        assert parent_id2 is None
 
-    def test_get_first_parent_id_with_Id_suffix(self):
+    def test_get_parent_info_with_Id_suffix(self):
         """Should detect FK with camelCase Id suffix."""
         row = {"id": 1, "name": "test", "companyId": 42}
-        assert _get_first_parent_id(row) == 42
+        parent_entity, parent_id = _get_parent_info(row, "user", None)
+        assert parent_entity == "company"
+        assert parent_id == 42
+
+    def test_get_parent_info_with_config(self):
+        """Should use config when provided."""
+        row = {"id": 1, "name": "test", "dataset_id": 5, "user_id": 10}
+        parent_relations = {"variable": "dataset"}
+        parent_entity, parent_id = _get_parent_info(row, "variable", parent_relations)
+        assert parent_entity == "dataset"
+        assert parent_id == 5
+
+    def test_get_parent_info_config_missing_fk_value(self):
+        """Should return parent_entity but None parent_id when FK column missing."""
+        row = {"id": 1, "name": "test"}
+        parent_relations = {"variable": "dataset"}
+        parent_entity, parent_id = _get_parent_info(row, "variable", parent_relations)
+        assert parent_entity == "dataset"
+        assert parent_id is None
 
 
 class TestStandardizeId:
@@ -224,6 +250,7 @@ class TestEvolutionPersistence:
                     entity="user",
                     entity_id=1,
                     parent_entity_id=None,
+                    parent_entity=None,
                     variable=None,
                     old_value=None,
                     new_value=None,
@@ -235,6 +262,7 @@ class TestEvolutionPersistence:
                     entity="user",
                     entity_id=1,
                     parent_entity_id=None,
+                    parent_entity=None,
                     variable="score",
                     old_value=100,
                     new_value=200,
@@ -389,6 +417,7 @@ class TestEvolutionXlsx:
                     entity="user",
                     entity_id="1",
                     parent_entity_id=None,
+                    parent_entity=None,
                     variable=None,
                     old_value=None,
                     new_value=None,
@@ -412,6 +441,7 @@ class TestEvolutionXlsx:
                     entity="user",
                     entity_id="1",
                     parent_entity_id="10",
+                    parent_entity="company",
                     variable="score",
                     old_value=100,
                     new_value=200,
@@ -438,6 +468,7 @@ class TestEvolutionXlsx:
                 "entity",
                 "entity_id",
                 "parent_entity_id",
+                "parent_entity",
                 "variable",
                 "old_value",
                 "new_value",
@@ -451,10 +482,11 @@ class TestEvolutionXlsx:
             assert row[2] == "user"
             assert row[3] == "1"
             assert row[4] == "10"
-            assert row[5] == "score"
-            assert row[6] == "100"
-            assert row[7] == "200"
-            assert row[8] == "Alice"
+            assert row[5] == "company"
+            assert row[6] == "score"
+            assert row[7] == "100"
+            assert row[8] == "200"
+            assert row[9] == "Alice"
 
     def test_save_evolution_empty_entries_does_nothing(self):
         """Should not create any files when entries list is empty."""
@@ -480,6 +512,7 @@ class TestEvolutionXlsx:
                     entity="user",
                     entity_id="1",
                     parent_entity_id=None,
+                    parent_entity=None,
                     variable=None,
                     old_value=None,
                     new_value=None,
@@ -496,6 +529,7 @@ class TestEvolutionXlsx:
                     entity="other",
                     entity_id="99",
                     parent_entity_id=None,
+                    parent_entity=None,
                     variable=None,
                     old_value=None,
                     new_value=None,
@@ -522,6 +556,7 @@ class TestEvolutionXlsx:
                     entity="user",
                     entity_id="1",
                     parent_entity_id=None,
+                    parent_entity=None,
                     variable="name",
                     old_value="Old",
                     new_value="New",
@@ -553,6 +588,7 @@ class TestEvolutionXlsx:
                     "entity",
                     "entity_id",
                     "parent_entity_id",
+                    "parent_entity",
                     "variable",
                     "old_value",
                     "new_value",
@@ -598,6 +634,7 @@ class TestEvolutionXlsx:
                     "entity",
                     "entity_id",
                     "parent_entity_id",
+                    "parent_entity",
                     "variable",
                     "old_value",
                     "new_value",
@@ -680,6 +717,7 @@ class TestLoadEvolutionXlsxEdgeCases:
                     "entity",
                     "entity_id",
                     "parent_entity_id",
+                    "parent_entity",
                     "variable",
                     "old_value",
                     "new_value",
@@ -687,12 +725,16 @@ class TestLoadEvolutionXlsxEdgeCases:
                 ]
             )
             # Valid row
-            ws.append([1234567890, "add", "user", "1", None, None, None, None, "Alice"])
+            ws.append(
+                [1234567890, "add", "user", "1", None, None, None, None, None, "Alice"]
+            )
             # Empty row (timestamp is None)
-            ws.append([None, "update", "user", "2", None, "name", "old", "new", "Bob"])
+            ws.append(
+                [None, "update", "user", "2", None, None, "name", "old", "new", "Bob"]
+            )
             # Another valid row
             ws.append(
-                [1234567891, "delete", "user", "3", None, None, None, None, "Eve"]
+                [1234567891, "delete", "user", "3", None, None, None, None, None, "Eve"]
             )
 
             wb.save(xlsx_path)
@@ -722,6 +764,7 @@ class TestLoadEvolutionXlsxEdgeCases:
                     "entity",
                     "entity_id",
                     "parent_entity_id",
+                    "parent_entity",
                     "variable",
                     "old_value",
                     "new_value",
@@ -736,6 +779,7 @@ class TestLoadEvolutionXlsxEdgeCases:
                     "user",
                     "1",
                     None,
+                    None,
                     "name",
                     "old",
                     "new",
@@ -749,6 +793,7 @@ class TestLoadEvolutionXlsxEdgeCases:
                     "modify",
                     "user",
                     "2",
+                    None,
                     None,
                     "email",
                     "a@b.com",
@@ -786,3 +831,228 @@ class TestLoadEvolutionXlsxEdgeCases:
             with patch("openpyxl.load_workbook", return_value=mock_wb):
                 loaded = load_evolution_xlsx(xlsx_path)
                 assert loaded == []
+
+
+class TestFilterCascadeEntries:
+    """Tests for cascade filtering of evolution entries."""
+
+    def test_filter_cascade_removes_child_add_when_parent_added(self):
+        """Should remove child add entries when parent has same add operation."""
+        entries = [
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="add",
+                entity="dataset",
+                entity_id="ds_1",
+                parent_entity_id=None,
+                parent_entity=None,
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name="Dataset 1",
+            ),
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="add",
+                entity="variable",
+                entity_id="var_1",
+                parent_entity_id="ds_1",
+                parent_entity="dataset",
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name="Variable 1",
+            ),
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="add",
+                entity="variable",
+                entity_id="var_2",
+                parent_entity_id="ds_1",
+                parent_entity="dataset",
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name="Variable 2",
+            ),
+        ]
+
+        result = filter_cascade_entries(entries)
+
+        # Only the parent add should remain
+        assert len(result) == 1
+        assert result[0].entity == "dataset"
+        assert result[0].entity_id == "ds_1"
+
+    def test_filter_cascade_removes_child_delete_when_parent_deleted(self):
+        """Should remove child delete entries when parent is deleted."""
+        entries = [
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="delete",
+                entity="dataset",
+                entity_id="ds_1",
+                parent_entity_id=None,
+                parent_entity=None,
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name="Dataset 1",
+            ),
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="delete",
+                entity="variable",
+                entity_id="var_1",
+                parent_entity_id="ds_1",
+                parent_entity="dataset",
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name="Variable 1",
+            ),
+        ]
+
+        result = filter_cascade_entries(entries)
+
+        # Only the parent delete should remain
+        assert len(result) == 1
+        assert result[0].entity == "dataset"
+
+    def test_filter_cascade_keeps_updates(self):
+        """Should always keep update entries."""
+        entries = [
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="add",
+                entity="dataset",
+                entity_id="ds_1",
+                parent_entity_id=None,
+                parent_entity=None,
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name=None,
+            ),
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="update",
+                entity="variable",
+                entity_id="var_1",
+                parent_entity_id="ds_1",
+                parent_entity="dataset",
+                variable="name",
+                old_value="Old",
+                new_value="New",
+                name=None,
+            ),
+        ]
+
+        result = filter_cascade_entries(entries)
+
+        # Both should remain: parent add + child update
+        assert len(result) == 2
+
+    def test_filter_cascade_keeps_orphan_entries(self):
+        """Should keep entries without parent relation."""
+        entries = [
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="add",
+                entity="user",
+                entity_id="u_1",
+                parent_entity_id=None,
+                parent_entity=None,
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name="User 1",
+            ),
+        ]
+
+        result = filter_cascade_entries(entries)
+
+        assert len(result) == 1
+
+    def test_filter_cascade_keeps_child_add_when_parent_not_added(self):
+        """Should keep child add when parent is not being added."""
+        entries = [
+            EvolutionEntry(
+                timestamp=1234567890,
+                type="add",
+                entity="variable",
+                entity_id="var_1",
+                parent_entity_id="ds_existing",
+                parent_entity="dataset",
+                variable=None,
+                old_value=None,
+                new_value=None,
+                name="New variable on existing dataset",
+            ),
+        ]
+
+        result = filter_cascade_entries(entries)
+
+        # Should remain because parent dataset is not in the entries
+        assert len(result) == 1
+
+
+class TestParentRelationsConfig:
+    """Tests for parent_relations configuration in save()."""
+
+    def test_save_with_parent_relations_filters_cascade(self):
+        """Should filter cascade entries when parent_relations provided."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir)
+
+            # Create initial data
+            db1 = Jsonjsdb()
+            db1._tables["dataset"] = Table("dataset", db1)
+            db1._tables["variable"] = Table("variable", db1)
+            db1["dataset"]._df = pl.DataFrame({"id": ["ds_1"], "name": ["Dataset 1"]})
+            db1["variable"]._df = pl.DataFrame(
+                {"id": ["var_1"], "name": ["Var 1"], "dataset_id": ["ds_1"]}
+            )
+            db1.save(path, track_evolution=False)
+
+            # Add new dataset with variables
+            db2 = Jsonjsdb(path)
+            db2["dataset"]._df = pl.DataFrame(
+                {"id": ["ds_1", "ds_2"], "name": ["Dataset 1", "Dataset 2"]}
+            )
+            db2["variable"]._df = pl.DataFrame(
+                {
+                    "id": ["var_1", "var_2", "var_3"],
+                    "name": ["Var 1", "Var 2", "Var 3"],
+                    "dataset_id": ["ds_1", "ds_2", "ds_2"],
+                }
+            )
+            db2.save(
+                path,
+                parent_relations={"variable": "dataset"},
+            )
+
+            # Load evolution
+            with open(path / "evolution.json") as f:
+                evolution = json.load(f)
+
+            # Should only have ds_2 add, not var_2 and var_3 adds
+            assert len(evolution) == 1
+            assert evolution[0]["entity"] == "dataset"
+            assert evolution[0]["entity_id"] == "ds_2"
+
+
+class TestCamelCaseFKEdgeCases:
+    """Edge case tests for camelCase FK detection."""
+
+    def test_get_parent_info_camelcase_fk_with_non_str_int_value(self):
+        """Should return None for parent_id when camelCase FK value is not str/int."""
+        row = {"id": 1, "name": "test", "companyId": None}
+        parent_entity, parent_id = _get_parent_info(row, "user", None)
+        assert parent_entity is None
+        assert parent_id is None
+
+        row2 = {"id": 1, "name": "test", "companyId": ["list"]}
+        parent_entity2, parent_id2 = _get_parent_info(row2, "user", None)
+        assert parent_entity2 is None
+        assert parent_id2 is None

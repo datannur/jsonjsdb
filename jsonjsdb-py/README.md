@@ -157,6 +157,27 @@ db.save(evolution_xlsx=Path("path/to/evolution.xlsx"))
 db.save(timestamp=1741186800)
 ```
 
+#### Cascade Filtering
+
+When a parent entity is added or deleted, all child entities are also added/deleted.
+By default, this creates noise in the evolution log. Use `parent_relations` to automatically
+filter out cascade entries:
+
+```python
+db.save(
+    parent_relations={
+        "variable": "dataset",    # variable.dataset_id → dataset
+        "freq": "variable",       # freq.variable_id → variable
+    }
+)
+```
+
+With cascade filtering:
+- Adding a dataset with 50 variables logs only 1 entry (the dataset add)
+- Deleting a dataset logs only the parent delete, not all child deletes
+- Updates are always logged (no filtering)
+- Explicit child additions (to existing parent) are still logged
+
 When `evolution_xlsx` is provided:
 - The xlsx file becomes the source of truth (read from xlsx if it exists)
 - User edits made in Excel are preserved on subsequent saves
@@ -171,6 +192,7 @@ Evolution format:
     "entity": "user",
     "entity_id": "user_2",
     "parent_entity_id": null,
+    "parent_entity": null,
     "variable": null,
     "old_value": null,
     "new_value": null,
@@ -179,12 +201,13 @@ Evolution format:
   {
     "timestamp": 1741186800,
     "type": "update",
-    "entity": "user",
-    "entity_id": "user_1",
-    "parent_entity_id": null,
-    "variable": "score",
-    "old_value": 100,
-    "new_value": 200,
+    "entity": "variable",
+    "entity_id": "var_1",
+    "parent_entity_id": "ds_1",
+    "parent_entity": "dataset",
+    "variable": "name",
+    "old_value": "Old Name",
+    "new_value": "New Name",
     "name": null
   }
 ]

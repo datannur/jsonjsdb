@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+add: `parent_relations` parameter on `save()` - define child→parent table mappings
+add: Cascade filtering - child add/delete entries removed when parent has same operation
+add: `parent_entity` field in `EvolutionEntry` - tracks parent table name for FK relationships
+add: `filter_cascade_entries()` function exported from evolution module
+ref: `_get_first_parent_id()` → `_get_parent_info()` - now returns (parent_entity, parent_entity_id)
+BREAKING: Evolution schema changed - new `parent_entity` column in evolution.json/xlsx
+
 ## 0.7.4
 
 add: `write_js` parameter on `save()` - skip `.json.js` generation when `False`

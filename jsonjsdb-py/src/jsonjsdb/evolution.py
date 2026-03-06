@@ -27,6 +27,7 @@ class EvolutionEntry:
     entity: str
     entity_id: str | int
     parent_entity_id: str | int | None
+    parent_entity: str | None
     variable: str | None
     old_value: Any
     new_value: Any
@@ -45,13 +46,40 @@ def _standardize_id(id_value: str) -> str:
     return INVALID_ID_PATTERN.sub("", trimmed)
 
 
-def _get_first_parent_id(row: dict[str, Any]) -> str | int | None:
-    """Find the first foreign key column (_id or Id suffix) and return its value."""
+def _get_parent_info(
+    row: dict[str, Any],
+    entity: str,
+    parent_relations: dict[str, str] | None,
+) -> tuple[str | None, str | int | None]:
+    """Get parent entity and id based on config or FK convention.
+
+    Args:
+        row: Row data
+        entity: Current entity/table name
+        parent_relations: Mapping of child_table -> parent_table
+
+    Returns:
+        Tuple of (parent_entity, parent_entity_id)
+    """
+    if parent_relations and entity in parent_relations:
+        parent_entity = parent_relations[entity]
+        fk_col = f"{parent_entity}_id"
+        parent_id = row.get(fk_col)
+        if isinstance(parent_id, (str, int)):
+            return (parent_entity, parent_id)
+        return (parent_entity, None)
+
+    # Fallback: auto-detect from first FK column
     for key, value in row.items():
-        if key.endswith("_id") or key.endswith("Id"):
+        if key.endswith("_id") and key != "id":
+            parent_entity = key[:-3]  # strip "_id"
             if isinstance(value, (str, int)):
-                return value
-    return None
+                return (parent_entity, value)
+        elif key.endswith("Id"):
+            parent_entity = key[:-2]  # strip "Id"
+            if isinstance(value, (str, int)):
+                return (parent_entity, value)
+    return (None, None)
 
 
 def _add_composite_id_if_missing(df: pl.DataFrame) -> tuple[pl.DataFrame, bool]:
@@ -109,6 +137,7 @@ def compare_datasets(
     new_df: pl.DataFrame,
     timestamp: int,
     entity: str,
+    parent_relations: dict[str, str] | None = None,
 ) -> list[EvolutionEntry]:
     """Compare two datasets and return list of evolution entries.
 
@@ -117,6 +146,7 @@ def compare_datasets(
         new_df: New version of the data
         timestamp: Unix timestamp in seconds
         entity: Table/entity name
+        parent_relations: Mapping of child_table -> parent_table for cascade filtering
 
     Returns:
         List of EvolutionEntry objects describing the changes
@@ -129,8 +159,6 @@ def compare_datasets(
     # Skip tracking for initial creation (no previous data)
     if old_df.is_empty():
         return entries
-
-    # Normalize IDs for consistent comparison
 
     # Normalize id columns to string for consistent comparison
     old_df = _normalize_id_column(old_df)
@@ -174,6 +202,9 @@ def compare_datasets(
             if _values_are_empty(old_value, new_value):
                 continue
 
+            parent_entity, parent_id = _get_parent_info(
+                obj_new, entity, parent_relations
+            )
             entries.append(
                 EvolutionEntry(
                     timestamp=timestamp,
@@ -185,8 +216,11 @@ def compare_datasets(
                         else entity_id
                     ),
                     parent_entity_id=(
-                        str(entity_id).split("---")[0] if has_composite_id else None
+                        str(entity_id).split("---")[0]
+                        if has_composite_id
+                        else parent_id
                     ),
+                    parent_entity=None if has_composite_id else parent_entity,
                     variable=variable,
                     old_value=old_value,
                     new_value=new_value,
@@ -197,6 +231,7 @@ def compare_datasets(
     # Detect additions
     for entity_id in ids_added:
         obj_new = map_new[entity_id]
+        parent_entity, parent_id = _get_parent_info(obj_new, entity, parent_relations)
         entries.append(
             EvolutionEntry(
                 timestamp=timestamp,
@@ -206,8 +241,9 @@ def compare_datasets(
                     _standardize_id(str(entity_id)) if has_composite_id else entity_id
                 ),
                 parent_entity_id=(
-                    str(entity_id).split("---")[0] if has_composite_id else None
+                    str(entity_id).split("---")[0] if has_composite_id else parent_id
                 ),
+                parent_entity=None if has_composite_id else parent_entity,
                 variable=None,
                 old_value=None,
                 new_value=None,
@@ -218,6 +254,7 @@ def compare_datasets(
     # Detect deletions
     for entity_id in ids_removed:
         obj_old = map_old[entity_id]
+        parent_entity, parent_id = _get_parent_info(obj_old, entity, parent_relations)
         entries.append(
             EvolutionEntry(
                 timestamp=timestamp,
@@ -226,7 +263,10 @@ def compare_datasets(
                 entity_id=(
                     _standardize_id(str(entity_id)) if has_composite_id else entity_id
                 ),
-                parent_entity_id=_get_first_parent_id(obj_old),
+                parent_entity_id=(
+                    str(entity_id).split("---")[0] if has_composite_id else parent_id
+                ),
+                parent_entity=None if has_composite_id else parent_entity,
                 variable=None,
                 old_value=None,
                 new_value=None,
@@ -239,6 +279,51 @@ def compare_datasets(
         )
 
     return entries
+
+
+def filter_cascade_entries(entries: list[EvolutionEntry]) -> list[EvolutionEntry]:
+    """Filter out cascade add/delete entries where parent has same operation.
+
+    When a parent entity is added or deleted, child entities are also added/deleted.
+    This function removes child entries that are part of a cascade operation,
+    keeping only the meaningful parent-level changes.
+
+    Args:
+        entries: List of evolution entries to filter
+
+    Returns:
+        Filtered list with cascade entries removed
+    """
+    # Index parent operations: (timestamp, type, entity, entity_id)
+    parent_ops: set[tuple[int, str, str, str]] = {
+        (e.timestamp, e.type, e.entity, str(e.entity_id))
+        for e in entries
+        if e.type in ("add", "delete")
+    }
+
+    result: list[EvolutionEntry] = []
+    for entry in entries:
+        # Always keep updates
+        if entry.type == "update":
+            result.append(entry)
+            continue
+
+        # Keep entries without parent relation
+        if not entry.parent_entity or entry.parent_entity_id is None:
+            result.append(entry)
+            continue
+
+        # Check if parent has the same operation in this batch
+        parent_key = (
+            entry.timestamp,
+            entry.type,
+            entry.parent_entity,
+            str(entry.parent_entity_id),
+        )
+        if parent_key not in parent_ops:
+            result.append(entry)
+
+    return result
 
 
 def load_evolution(path: Path, xlsx_path: Path | None = None) -> list[EvolutionEntry]:
@@ -264,6 +349,7 @@ def load_evolution(path: Path, xlsx_path: Path | None = None) -> list[EvolutionE
             entity=row["entity"],
             entity_id=row["entity_id"],
             parent_entity_id=row.get("parent_entity_id"),
+            parent_entity=row.get("parent_entity"),
             variable=row.get("variable"),
             old_value=row.get("old_value"),
             new_value=row.get("new_value"),
@@ -303,10 +389,11 @@ def load_evolution_xlsx(xlsx_path: Path) -> list[EvolutionEntry]:
                 entity=str(row[2]) if row[2] else "",
                 entity_id=str(row[3]) if row[3] else "",
                 parent_entity_id=str(row[4]) if row[4] else None,
-                variable=str(row[5]) if row[5] else None,
-                old_value=row[6] if row[6] else None,
-                new_value=row[7] if row[7] else None,
-                name=str(row[8]) if row[8] else None,
+                parent_entity=str(row[5]) if row[5] else None,
+                variable=str(row[6]) if row[6] else None,
+                old_value=row[7] if row[7] else None,
+                new_value=row[8] if row[8] else None,
+                name=str(row[9]) if len(row) > 9 and row[9] else None,
             )
         )
     return entries
@@ -343,6 +430,7 @@ def save_evolution(
         "entity",
         "entity_id",
         "parent_entity_id",
+        "parent_entity",
         "variable",
         "old_value",
         "new_value",
@@ -356,6 +444,7 @@ def save_evolution(
             entry.entity,
             entry.entity_id,
             entry.parent_entity_id,
+            entry.parent_entity,
             entry.variable,
             entry.old_value,
             entry.new_value,
@@ -388,6 +477,7 @@ def write_evolution_xlsx(entries: list[EvolutionEntry], xlsx_path: Path) -> None
         "entity",
         "entity_id",
         "parent_entity_id",
+        "parent_entity",
         "variable",
         "old_value",
         "new_value",
@@ -404,6 +494,7 @@ def write_evolution_xlsx(entries: list[EvolutionEntry], xlsx_path: Path) -> None
                 entry.entity,
                 str(entry.entity_id) if entry.entity_id is not None else "",
                 str(entry.parent_entity_id) if entry.parent_entity_id else "",
+                str(entry.parent_entity) if entry.parent_entity else "",
                 str(entry.variable) if entry.variable else "",
                 str(entry.old_value) if entry.old_value is not None else "",
                 str(entry.new_value) if entry.new_value is not None else "",
