@@ -7,8 +7,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from jsonjsdb import Jsonjsdb, Table, EvolutionEntry, compare_datasets
+from jsonjsdb import Jsonjsdb, Table, EvolutionEntry
 from jsonjsdb.evolution import (
+    compare_datasets,
     _standardize_id,
     _get_first_parent_id,
     _df_to_dict_by_id,
@@ -62,6 +63,17 @@ class TestCompareDatasets:
         assert result[0].type == "delete"
         assert result[0].entity_id == "2"
         assert result[0].name == "Bob"
+
+    def test_detect_all_deletions(self):
+        """Should detect when all rows are deleted (new_df empty)."""
+        old_df = pl.DataFrame({"id": ["1", "2"], "name": ["Alice", "Bob"]})
+        new_df = pl.DataFrame(schema={"id": pl.Utf8, "name": pl.Utf8})
+
+        result = compare_datasets(old_df, new_df, 1234567890, "user")
+
+        assert len(result) == 2
+        assert all(e.type == "delete" for e in result)
+        assert {e.entity_id for e in result} == {"1", "2"}
 
     def test_detect_update(self):
         """Should detect updated fields."""

@@ -147,6 +147,9 @@ db.save()
 # Disable tracking
 db.save(track_evolution=False)
 
+# Skip .json.js files (faster, smaller output)
+db.save(write_js=False)
+
 # Use Excel as source (for easy editing of logs)
 db.save(evolution_xlsx=Path("path/to/evolution.xlsx"))
 

@@ -331,8 +331,31 @@ def test_save_to_new_path(tmp_path: Path):
 
     assert new_path.exists()
     assert (new_path / "__table__.json").exists()
+    assert (new_path / "__table__.json.js").exists()
     assert (new_path / "user.json").exists()
     assert (new_path / "user.json.js").exists()
+
+    # Verify __table__.json.js content format
+    js_content = (new_path / "__table__.json.js").read_text()
+    assert js_content.startswith("jsonjs.data['__table__'] = ")
+    assert '["name","last_modif"]' in js_content
+
+
+def test_save_with_write_js_false(tmp_path: Path):
+    """Should skip .json.js files when write_js=False."""
+    db = TypedDB(DB_PATH)
+    db.user.add(
+        {"id": "user_new", "name": "New", "status": "active", "tag_ids": ["tag_1"]}
+    )
+
+    new_path = tmp_path / "no_js_db"
+    db.save(new_path, write_js=False)
+
+    assert new_path.exists()
+    assert (new_path / "__table__.json").exists()
+    assert not (new_path / "__table__.json.js").exists()
+    assert (new_path / "user.json").exists()
+    assert not (new_path / "user.json.js").exists()
 
 
 def test_save_and_reload(tmp_path: Path):

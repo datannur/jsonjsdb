@@ -34,21 +34,26 @@ def write_table_jsonjs(df: pl.DataFrame, table_name: str, path: Path) -> None:
 
 
 def write_table_index(
-    tables: list[str], path: Path, timestamp: Optional[int] = None
+    tables: list[str],
+    path: Path,
+    timestamp: Optional[int] = None,
+    *,
+    write_js: bool = True,
 ) -> None:
-    """Write __table__.json with table metadata.
+    """Write __table__.json and optionally __table__.json.js with table metadata.
 
     Args:
         tables: List of table names to include
         path: Path to write __table__.json
         timestamp: Optional timestamp override (uses current time if None)
+        write_js: If True, also write __table__.json.js (default: True)
     """
     now = timestamp if timestamp is not None else int(time.time())
-    entries = [{"name": name, "last_modif": now} for name in sorted(tables)]
+    df = pl.DataFrame([{"name": name, "last_modif": now} for name in sorted(tables)])
 
-    with open(path, "w") as f:
-        json.dump(entries, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    write_table_json(df, path)
+    if write_js:
+        write_table_jsonjs(df, "__table__", path.with_suffix(".json.js"))
 
 
 def _prepare_df_for_write(df: pl.DataFrame) -> pl.DataFrame:

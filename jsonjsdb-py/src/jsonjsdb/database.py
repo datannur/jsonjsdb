@@ -107,6 +107,7 @@ class Jsonjsdb:
         track_evolution: bool = True,
         evolution_xlsx: Path | str | None = None,
         timestamp: int | None = None,
+        write_js: bool = True,
     ) -> None:
         """Save all tables to disk with optional evolution tracking.
 
@@ -118,6 +119,7 @@ class Jsonjsdb:
             track_evolution: Enable change tracking (default: True)
             evolution_xlsx: Optional path for evolution.xlsx output
             timestamp: Optional timestamp override for deterministic outputs
+            write_js: If True, write both .json and .json.js (default: True)
         """
         save_path = Path(path) if path else self._path
 
@@ -149,7 +151,8 @@ class Jsonjsdb:
                 new_entries.extend(entries)
 
             write_table_json(persistable_df, save_path / f"{name}.json")
-            write_table_jsonjs(persistable_df, name, save_path / f"{name}.json.js")
+            if write_js:
+                write_table_jsonjs(persistable_df, name, save_path / f"{name}.json.js")
             table_names.append(name)
 
             # Update snapshot for next comparison
@@ -161,10 +164,12 @@ class Jsonjsdb:
             existing_entries = load_evolution(save_path, xlsx_path)
             all_entries = existing_entries + new_entries
             save_evolution(all_entries, save_path, xlsx_path)
-            if "evolution" not in table_names:
+            if "evolution" not in table_names:  # pragma: no branch
                 table_names.append("evolution")
 
-        write_table_index(table_names, save_path / "__table__.json", ts)
+        write_table_index(
+            table_names, save_path / "__table__.json", ts, write_js=write_js
+        )
 
         self._path = save_path
 
