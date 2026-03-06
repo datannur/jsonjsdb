@@ -49,7 +49,8 @@ def write_table_index(
         write_js: If True, also write __table__.json.js (default: True)
     """
     now = timestamp if timestamp is not None else int(time.time())
-    df = pl.DataFrame([{"name": name, "last_modif": now} for name in sorted(tables)])
+    all_tables = sorted(tables) + ["__table__"]
+    df = pl.DataFrame([{"name": name, "last_modif": now} for name in all_tables])
 
     write_table_json(df, path)
     if write_js:

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1
+
+fix: `__table__.json` now includes itself in the list (align with JS behavior)
+
 ## 0.8.0
 
 add: `parent_relations` parameter on `save()` - define child→parent table mappings
