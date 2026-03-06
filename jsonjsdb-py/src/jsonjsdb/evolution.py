@@ -144,9 +144,7 @@ def compare_datasets(
     map_new = _df_to_dict_by_id(new_df)
 
     # Determine all variables to compare
-    if old_df.is_empty():
-        variables = new_df.columns
-    elif new_df.is_empty():
+    if new_df.is_empty():
         variables = old_df.columns
     else:
         variables = list(set(old_df.columns) | set(new_df.columns))

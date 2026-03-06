@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.4
+
+add: `write_js` parameter on `save()` - skip `.json.js` generation when `False`
+fix: `write_table_index()` now writes `__table__.json.js` (was missing)
+
 ## 0.7.3
 
 add: Optional `timestamp` parameter on `save()` for deterministic outputs
