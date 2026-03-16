@@ -12,7 +12,7 @@ def write_table_json(df: pl.DataFrame, path: Path) -> None:
     """Write a DataFrame to a JSON file (array of objects)."""
     prepared_df = _prepare_df_for_write(df)
     rows = _df_to_json_rows(prepared_df)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(rows, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
@@ -29,7 +29,7 @@ def write_table_jsonjs(df: pl.DataFrame, table_name: str, path: Path) -> None:
     json_array = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
     content = f"jsonjs.data['{table_name}'] = {json_array}\n"
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
 

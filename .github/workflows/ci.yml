@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -34,7 +34,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.core-changes.outputs.changed == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -46,7 +46,7 @@ jobs:
 
       - name: Cache Playwright browsers
         if: steps.core-changes.outputs.changed == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
@@ -83,7 +83,7 @@ jobs:
 
       - name: Upload build artifacts
         if: steps.core-changes.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jsonjsdb-dist
           path: jsonjsdb/dist/
@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -121,7 +121,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.builder-changes.outputs.changed == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -157,7 +157,7 @@ jobs:
 
       - name: Upload build artifacts
         if: steps.builder-changes.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jsonjsdb-builder-dist
           path: jsonjsdb-builder/dist/
@@ -170,13 +170,13 @@ jobs:
 
   test-python:
     name: Test Python Package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
         python-version: ['3.9', '3.14']
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -195,7 +195,10 @@ jobs:
 
       - name: Setup uv
         if: steps.python-changes.outputs.changed == 'true'
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'jsonjsdb-py/pyproject.toml'
 
       - name: Install Python
         if: steps.python-changes.outputs.changed == 'true'
