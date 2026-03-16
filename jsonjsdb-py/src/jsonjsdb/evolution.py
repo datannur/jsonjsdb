@@ -331,7 +331,7 @@ def load_evolution(path: Path, xlsx_path: Path | None = None) -> list[EvolutionE
     if not evolution_path.exists():
         return []
 
-    with open(evolution_path) as f:
+    with open(evolution_path, encoding="utf-8") as f:
         data = json.load(f)
 
     return [
@@ -410,7 +410,7 @@ def save_evolution(
     evolution_json_path = path / "evolution.json"
     data = [entry.to_dict() for entry in entries]
 
-    with open(evolution_json_path, "w") as f:
+    with open(evolution_json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
 
@@ -447,7 +447,7 @@ def save_evolution(
     json_array = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
     content = f"jsonjs.data['evolution'] = {json_array}\n"
 
-    with open(evolution_jsonjs_path, "w") as f:
+    with open(evolution_jsonjs_path, "w", encoding="utf-8") as f:
         f.write(content)
 
     # Write evolution.xlsx if path provided

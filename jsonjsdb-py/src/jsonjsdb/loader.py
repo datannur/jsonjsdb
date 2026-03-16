@@ -1,5 +1,6 @@
 """Load JSON files into Polars DataFrames."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,5 @@ def _convert_ids_column(col_name: str, col_type: pl.DataType) -> pl.Expr:
 
 def load_table_index(path: Path) -> list[dict[str, Any]]:
     """Load __table__.json which contains table metadata."""
-    import json
-
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)

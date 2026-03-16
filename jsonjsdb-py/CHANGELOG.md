@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3
+
+fix: Add explicit `encoding="utf-8"` to all file operations (Windows compatibility)
+ref: Move inline `import json` to module top in loader.py
+
 ## 0.8.2
 
 fix: `parent_entity_id` now correct for tables with composite ID (was using first segment instead of FK value)
