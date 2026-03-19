@@ -6,10 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-and-build-core:
     name: Test and Build Core Package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -19,16 +23,13 @@ jobs:
       - name: Check core changes
         id: core-changes
         run: |
-          # Check if we have a previous commit to compare against
           if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            # Normal case: compare with previous commit
-            if git diff HEAD~1 HEAD --name-only | grep -E '^(jsonjsdb/|package\.json|package-lock\.json|eslint\.config\.ts|\.github/workflows/)'; then
+            if git diff HEAD~1 HEAD --name-only | grep -qE '^(jsonjsdb/|package\.json|package-lock\.json|eslint\.config\.ts|\.github/workflows/)'; then
               echo "changed=true" >> $GITHUB_OUTPUT
             else
               echo "changed=false" >> $GITHUB_OUTPUT
             fi
           else
-            # Fallback: first commit or shallow clone, run tests to be safe
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
@@ -49,37 +50,27 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Playwright browsers
         if: steps.core-changes.outputs.changed == 'true'
         run: npx playwright install chromium
 
-      - name: Run ESLint
+      - name: Lint and type-check
         if: steps.core-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb
-        run: npm run lint
-
-      - name: Run TypeScript type check
-        if: steps.core-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb
-        run: npx tsc --noEmit
-
-      - name: Check code formatting
-        if: steps.core-changes.outputs.changed == 'true'
-        run: npm run format:check
+        run: |
+          npm run format:check
+          cd jsonjsdb && npm run lint && npx tsc --noEmit
 
       - name: Run tests
         if: steps.core-changes.outputs.changed == 'true'
         working-directory: jsonjsdb
         run: npm test
 
-      - name: Build package
+      - name: Build and verify package
         if: steps.core-changes.outputs.changed == 'true'
         working-directory: jsonjsdb
-        run: npm run build
+        run: npm run build && npm pack --dry-run
 
       - name: Upload build artifacts
         if: steps.core-changes.outputs.changed == 'true'
@@ -89,14 +80,9 @@ jobs:
           path: jsonjsdb/dist/
           retention-days: 7
 
-      - name: Check package integrity
-        if: steps.core-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb
-        run: npm pack --dry-run
-
   test-and-build-builder:
     name: Test and Build Builder Package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -106,16 +92,13 @@ jobs:
       - name: Check builder changes
         id: builder-changes
         run: |
-          # Check if we have a previous commit to compare against
           if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            # Normal case: compare with previous commit
-            if git diff HEAD~1 HEAD --name-only | grep -E '^(jsonjsdb-builder/|package\.json|package-lock\.json|eslint\.config\.ts|\.github/workflows/)'; then
+            if git diff HEAD~1 HEAD --name-only | grep -qE '^(jsonjsdb-builder/|package\.json|package-lock\.json|eslint\.config\.ts|\.github/workflows/)'; then
               echo "changed=true" >> $GITHUB_OUTPUT
             else
               echo "changed=false" >> $GITHUB_OUTPUT
             fi
           else
-            # Fallback: first commit or shallow clone, run tests to be safe
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
@@ -131,29 +114,21 @@ jobs:
         if: steps.builder-changes.outputs.changed == 'true'
         run: npm ci --no-audit
 
-      - name: Run ESLint
+      - name: Lint and type-check
         if: steps.builder-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb-builder
-        run: npm run lint
-
-      - name: Run TypeScript type check
-        if: steps.builder-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb-builder
-        run: npx tsc --noEmit
-
-      - name: Check code formatting
-        if: steps.builder-changes.outputs.changed == 'true'
-        run: npm run format:check
+        run: |
+          npm run format:check
+          cd jsonjsdb-builder && npm run lint && npx tsc --noEmit
 
       - name: Run tests
         if: steps.builder-changes.outputs.changed == 'true'
         working-directory: jsonjsdb-builder
-        run: npm run test
+        run: npm test
 
-      - name: Build package
+      - name: Build and verify package
         if: steps.builder-changes.outputs.changed == 'true'
         working-directory: jsonjsdb-builder
-        run: npm run build
+        run: npm run build && npm pack --dry-run
 
       - name: Upload build artifacts
         if: steps.builder-changes.outputs.changed == 'true'
@@ -163,17 +138,18 @@ jobs:
           path: jsonjsdb-builder/dist/
           retention-days: 7
 
-      - name: Check package integrity
-        if: steps.builder-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb-builder
-        run: npm pack --dry-run
-
   test-python:
-    name: Test Python Package
+    name: CI Python (${{ matrix.python-version }}, ${{ matrix.resolution }})
     runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
         python-version: ['3.9', '3.14']
+        resolution: ['lowest', 'highest']
+        exclude:
+          - python-version: '3.9'
+            resolution: 'highest'
+          - python-version: '3.14'
+            resolution: 'lowest'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -184,7 +160,7 @@ jobs:
         id: python-changes
         run: |
           if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            if git diff HEAD~1 HEAD --name-only | grep -E '^(jsonjsdb-py/|\.github/workflows/)'; then
+            if git diff HEAD~1 HEAD --name-only | grep -qE '^(jsonjsdb-py/|\.github/workflows/)'; then
               echo "changed=true" >> $GITHUB_OUTPUT
             else
               echo "changed=false" >> $GITHUB_OUTPUT
@@ -198,6 +174,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+          cache-suffix: ${{ matrix.python-version }}-${{ matrix.resolution }}
           cache-dependency-glob: 'jsonjsdb-py/pyproject.toml'
 
       - name: Install Python
@@ -207,17 +184,12 @@ jobs:
       - name: Install dependencies
         if: steps.python-changes.outputs.changed == 'true'
         working-directory: jsonjsdb-py
-        run: uv sync
+        run: uv sync --resolution ${{ matrix.resolution }}
 
       - name: Run checks
         if: steps.python-changes.outputs.changed == 'true'
         working-directory: jsonjsdb-py
         run: make check
-
-      - name: Generate coverage report
-        if: steps.python-changes.outputs.changed == 'true' && matrix.python-version == '3.14'
-        working-directory: jsonjsdb-py
-        run: uv run pytest --cov=src/jsonjsdb --cov-report=xml
 
       - name: Upload coverage to Codecov
         if: steps.python-changes.outputs.changed == 'true' && matrix.python-version == '3.14'
@@ -230,25 +202,16 @@ jobs:
 
   ci-success:
     name: CI Success
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: [test-and-build-core, test-and-build-builder, test-python]
     if: always()
     steps:
       - name: Check CI success
         run: |
-          echo "Core job result: ${{ needs.test-and-build-core.result }}"
-          echo "Builder job result: ${{ needs.test-and-build-builder.result }}"
-          echo "Python job result: ${{ needs.test-python.result }}"
+          echo "Core: ${{ needs.test-and-build-core.result }}"
+          echo "Builder: ${{ needs.test-and-build-builder.result }}"
+          echo "Python: ${{ needs.test-python.result }}"
 
-          # Check if any required job failed
           if [[ "${{ needs.test-and-build-core.result }}" == "failure" || "${{ needs.test-and-build-builder.result }}" == "failure" || "${{ needs.test-python.result }}" == "failure" ]]; then
-            echo "❌ CI failed - one or more jobs failed"
             exit 1
-          fi
-
-          # Check if any job was skipped (no changes detected)
-          if [[ "${{ needs.test-and-build-core.result }}" == "success" || "${{ needs.test-and-build-builder.result }}" == "success" || "${{ needs.test-python.result }}" == "success" ]]; then
-            echo "✅ CI passed - all relevant packages tested successfully"
-          else
-            echo "ℹ️  No package changes detected - CI passes"
           fi
