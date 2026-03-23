@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.4
+
+fix: Convert NaN to null in JSON output for valid JSON (RFC 8259) and TypeScript compatibility
+
 ## 0.8.3
 
 fix: Add explicit `encoding="utf-8"` to all file operations (Windows compatibility)
