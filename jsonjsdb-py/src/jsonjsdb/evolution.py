@@ -411,7 +411,7 @@ def save_evolution(
     data = [entry.to_dict() for entry in entries]
 
     with open(evolution_json_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(data, f, indent=2, ensure_ascii=False, allow_nan=False)
         f.write("\n")
 
     # Write evolution.json.js
@@ -444,7 +444,9 @@ def save_evolution(
         ]
         rows.append(row)
 
-    json_array = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+    json_array = json.dumps(
+        rows, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    )
     content = f"jsonjs.data['evolution'] = {json_array}\n"
 
     with open(evolution_jsonjs_path, "w", encoding="utf-8") as f:

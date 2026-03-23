@@ -1278,3 +1278,25 @@ def test_internal_tables_not_loaded():
         assert "__table__" not in db2._tables
         assert "user" in db2._tables
         assert db2.tables == ["user"]
+
+
+def test_save_nan_as_null(tmp_path: Path):
+    """Should convert NaN to null in JSON output."""
+    db = Jsonjsdb()
+    db._tables["data"] = Table("data", db)
+    db["data"].add({"id": "1", "value": float("nan"), "score": 42.0})
+    db["data"].add({"id": "2", "value": 3.14, "score": float("nan")})
+    db.save(tmp_path)
+
+    raw = (tmp_path / "data.json").read_text()
+    assert "NaN" not in raw
+    assert "nan" not in raw
+
+    rows = json.loads(raw)
+    assert rows[0]["value"] is None
+    assert rows[0]["score"] == 42.0
+    assert rows[1]["value"] == 3.14
+    assert rows[1]["score"] is None
+
+    js_raw = (tmp_path / "data.json.js").read_text()
+    assert "NaN" not in js_raw

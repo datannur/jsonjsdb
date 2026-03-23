@@ -13,7 +13,7 @@ def write_table_json(df: pl.DataFrame, path: Path) -> None:
     prepared_df = _prepare_df_for_write(df)
     rows = _df_to_json_rows(prepared_df)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(rows, f, indent=2, ensure_ascii=False)
+        json.dump(rows, f, indent=2, ensure_ascii=False, allow_nan=False)
         f.write("\n")
 
 
@@ -26,7 +26,9 @@ def write_table_jsonjs(df: pl.DataFrame, table_name: str, path: Path) -> None:
     for row in prepared_df.iter_rows():
         rows.append(list(row))
 
-    json_array = json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
+    json_array = json.dumps(
+        rows, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    )
     content = f"jsonjs.data['{table_name}'] = {json_array}\n"
 
     with open(path, "w", encoding="utf-8") as f:
@@ -58,7 +60,8 @@ def write_table_index(
 
 
 def _prepare_df_for_write(df: pl.DataFrame) -> pl.DataFrame:
-    """Prepare DataFrame for writing: convert List columns to comma-separated strings."""
+    """Prepare DataFrame for writing: convert List columns to comma-separated strings
+    and NaN to null for valid JSON output."""
     transforms: list[pl.Expr] = []
 
     for col_name in df.columns:
@@ -71,6 +74,8 @@ def _prepare_df_for_write(df: pl.DataFrame) -> pl.DataFrame:
                 .fill_null("")
                 .alias(col_name)
             )
+        elif col_type.is_float():
+            transforms.append(pl.col(col_name).fill_nan(None))
         else:
             transforms.append(pl.col(col_name))
 
