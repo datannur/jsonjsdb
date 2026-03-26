@@ -3,3 +3,4 @@
 
 # Python package
 jsonjsdb-py/
+.pytest_cache/
