@@ -194,7 +194,7 @@ jobs:
         run: uv sync --resolution ${{ matrix.resolution }}
 
       - name: Check lockfile integrity
-        if: steps.python-changes.outputs.changed == 'true'
+        if: steps.python-changes.outputs.changed == 'true' && matrix.resolution == 'highest'
         working-directory: jsonjsdb-py
         run: uv lock --check
 
