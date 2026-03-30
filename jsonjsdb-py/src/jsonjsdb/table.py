@@ -267,7 +267,7 @@ class Table(Generic[T]):
                 raise ValueError(f"IDs already exist: {conflicts}")
 
         prepared = [self._prepare_row_for_storage(d) for d in dicts]
-        new_df = pl.DataFrame(prepared)
+        new_df = pl.DataFrame(prepared, infer_schema_length=None)
 
         if self._df.is_empty():
             self._df = new_df
