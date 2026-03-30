@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.5
+
+fix: `add_all()` fails with `ComputeError` when leading rows have `None` and later rows have `str` values
+
 ## 0.8.4
 
 fix: Convert NaN to null in JSON output for valid JSON (RFC 8259) and TypeScript compatibility
