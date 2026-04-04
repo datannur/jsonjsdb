@@ -61,7 +61,7 @@ export class JsonjsdbBuilder {
     ])
     await this.deleteOldFiles(inputMetadata)
     await this.updateTables(inputMetadata, outputMetadata)
-    await this.saveEvolution(inputMetadata)
+    await this.saveEvolution(inputMetadata, outputMetadata)
     await this.saveMetadata(inputMetadata, outputMetadata)
   }
 
@@ -266,7 +266,10 @@ export class JsonjsdbBuilder {
     return updatePromises.length > 0
   }
 
-  private async saveEvolution(inputMetadata: MetadataItem[]): Promise<void> {
+  private async saveEvolution(
+    inputMetadata: MetadataItem[],
+    outputMetadata: MetadataItem[],
+  ): Promise<void> {
     const evolutionFileJsonjs = path.join(this.outputDb, `evolution.json`)
     const evolutionFile = path.join(this.inputDb, `evolution.xlsx`)
     if (this.newEvoEntries.length > 0) {
@@ -295,14 +298,16 @@ export class JsonjsdbBuilder {
         if (inputMetadataRow.name === 'evolution') {
           evoFound = true
           if (this.newEvoEntries.length > 0) {
-            inputMetadataRow.lastModif = this.updateDbTimestamp
+            const stats = await fs.stat(evolutionFile)
+            inputMetadataRow.lastModif = Math.round(stats.mtimeMs / 1000)
           }
         }
       }
       if (!evoFound) {
+        const outputEvo = outputMetadata.find(row => row.name === 'evolution')
         inputMetadata.push({
           name: 'evolution',
-          lastModif: this.updateDbTimestamp,
+          lastModif: outputEvo?.lastModif ?? Math.round(Date.now() / 1000),
         })
       }
     }
