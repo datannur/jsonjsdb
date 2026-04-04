@@ -1,5 +1,9 @@
 # jsonjsdb-builder
 
+## 0.6.10 (2026-04-04)
+
+- fix: prevent `__table__.json` rewrite on every dev server start
+
 ## 0.6.9 (2026-03-05)
 
 - fix: bump version (0.6.8 was unpublished from npm)
