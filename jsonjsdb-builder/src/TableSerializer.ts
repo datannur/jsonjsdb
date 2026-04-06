@@ -8,7 +8,7 @@ function camelToSnake(str: string): string {
   return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)
 }
 
-function transformKeysToSnake(data: Row[]): Row[] {
+export function transformKeysToSnake(data: Row[]): Row[] {
   if (!data || data.length === 0) return []
   const headers = data[0] as string[]
   const transformedHeaders = headers.map(header => camelToSnake(header))

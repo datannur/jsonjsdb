@@ -12,6 +12,7 @@ import {
   readJsonjs,
   writeJsonjs,
   snakeToCamelKeys,
+  transformKeysToSnake,
   TableRow,
   Row,
 } from './TableSerializer'
@@ -254,14 +255,20 @@ export class JsonjsdbBuilder {
     outputMetadata: MetadataItem[],
   ): Promise<boolean> {
     const outputMetadataObj = this.metadataListToObject(outputMetadata)
+    this.newEvoEntries = []
     const updatePromises = []
     for (const row of inputMetadata) {
       const isInOutput = row.name in outputMetadataObj
       if (isInOutput && outputMetadataObj[row.name] >= row.lastModif) continue
       if (row.name === 'evolution') continue
-      updatePromises.push(this.updateTable(row.name))
+      updatePromises.push(
+        this.updateTable(row.name).then(changed => {
+          if (!changed && isInOutput) {
+            row.lastModif = outputMetadataObj[row.name]
+          }
+        }),
+      )
     }
-    this.newEvoEntries = []
     await Promise.all(updatePromises)
     return updatePromises.length > 0
   }
@@ -313,21 +320,24 @@ export class JsonjsdbBuilder {
     }
   }
 
-  private async updateTable(table: string): Promise<void> {
+  private async updateTable(table: string): Promise<boolean> {
     const inputFile = path.join(this.inputDb, `${table}.xlsx`)
+    const outputJsonFile = path.join(this.outputDb, `${table}.json`)
     const tableData = await readExcel(inputFile)
-    await this.addNewEvoEntries(table, tableData)
+    const newData = toObjects(transformKeysToSnake(tableData as Row[]))
+    const oldData = await readJsonjs(outputJsonFile)
+    if (JSON.stringify(newData) === JSON.stringify(oldData)) return false
+    await this.addNewEvoEntries(table, tableData, oldData)
     await writeJsonjs(this.outputDb, table, tableData, { toSnakeCase: true })
     console.log(`Jsonjsdb updating ${table}`)
+    return true
   }
 
   private async addNewEvoEntries(
     table: string,
     tableData: Row[],
+    oldTableData: TableRow[],
   ): Promise<void> {
-    const oldTableData = await readJsonjs(
-      path.join(this.outputDb, `${table}.json`),
-    )
     const newEvoEntries = compareDatasets(
       oldTableData,
       toObjects(tableData),
