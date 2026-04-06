@@ -1,5 +1,9 @@
 # jsonjsdb-builder
 
+## 0.6.11 (2026-04-07)
+
+- fix: skip table regeneration when source file mtime changes but content is identical (e.g. after git checkout)
+
 ## 0.6.10 (2026-04-04)
 
 - fix: prevent `__table__.json` rewrite on every dev server start

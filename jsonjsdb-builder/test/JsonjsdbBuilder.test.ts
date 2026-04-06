@@ -205,6 +205,46 @@ describe('JsonjsdbBuilder E2E Tests', () => {
       await builder.updateDb(testExcelPath)
       await assertBasicFiles()
     })
+
+    it('should not regenerate when source mtime changes but content is identical', async () => {
+      const builder = await setupBuilder()
+
+      await builder.updateDb(testExcelPath)
+
+      const tableIndexPath = builder.getTableIndexFile()
+      const metaBefore = JSON.parse(await fs.readFile(tableIndexPath, 'utf-8'))
+      const userJsonBefore = await fs.readFile(
+        path.join(outputDbDir, 'user.json.js'),
+        'utf-8',
+      )
+
+      // Simulate git checkout: rewrite files to bump mtime without changing content
+      const files = await fs.readdir(testExcelPath)
+      for (const file of files) {
+        if (!file.endsWith('.xlsx')) continue
+        const filePath = path.join(testExcelPath, file)
+        const content = await fs.readFile(filePath)
+        await fs.writeFile(filePath, content)
+      }
+
+      await builder.updateDb(testExcelPath)
+
+      const metaAfter = JSON.parse(await fs.readFile(tableIndexPath, 'utf-8'))
+      const userJsonAfter = await fs.readFile(
+        path.join(outputDbDir, 'user.json.js'),
+        'utf-8',
+      )
+
+      expect(userJsonAfter).toBe(userJsonBefore)
+
+      const userBefore = metaBefore.find(
+        (r: Record<string, unknown>) => r.name === 'user',
+      )
+      const userAfter = metaAfter.find(
+        (r: Record<string, unknown>) => r.name === 'user',
+      )
+      expect(userAfter.last_modif).toBe(userBefore.last_modif)
+    })
   })
 
   describe('Markdown directory processing', () => {
