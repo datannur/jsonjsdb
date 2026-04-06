@@ -1300,3 +1300,19 @@ def test_save_nan_as_null(tmp_path: Path):
 
     js_raw = (tmp_path / "data.json.js").read_text()
     assert "NaN" not in js_raw
+
+
+def test_load_nullable_column_with_late_value(tmp_path: Path):
+    """Should load table where a column is null in early rows and numeric later."""
+    table_index = [{"name": "variable", "last_modif": 0}]
+    (tmp_path / "__table__.json").write_text(json.dumps(table_index))
+
+    rows = [{"id": f"v{i}", "key": None} for i in range(120)]
+    rows[110]["key"] = 1
+    (tmp_path / "variable.json").write_text(json.dumps(rows))
+
+    db = Jsonjsdb(tmp_path)
+    all_rows = db["variable"].all()
+    assert len(all_rows) == 120
+    assert all_rows[110]["key"] == 1
+    assert all_rows[0]["key"] is None

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.6
+
+fix: `load_table()` fails with `ComputeError` when a nullable column is all `null` in the first inferred rows and contains a numeric value later
+
 ## 0.8.5
 
 fix: `add_all()` fails with `ComputeError` when leading rows have `None` and later rows have `str` values

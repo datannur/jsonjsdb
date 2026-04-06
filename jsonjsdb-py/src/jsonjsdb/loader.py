@@ -13,7 +13,7 @@ def load_table(path: Path) -> pl.DataFrame:
     - Converts 'id' column to string type
     - Converts '*_ids' columns from comma-separated strings to list[str]
     """
-    df = pl.read_json(path)
+    df = pl.read_json(path, infer_schema_length=None)
 
     if df.is_empty():
         return df
