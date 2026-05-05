@@ -1430,6 +1430,64 @@ def test_typed_integer_field_rejects_non_integral_float():
         db.metric.add({"id": "row-1", "count": 392.5})  # type: ignore[typeddict-item]
 
 
+def test_entity_type_schema_supports_dataclass_scalar_and_list_fields():
+    @dataclass
+    class MetricEntity:
+        id: str
+        count: int
+        active: bool
+        tags: list[str]
+
+    table: Table[MetricEntity] = Table("metric", entity_type=MetricEntity)
+    table.add(MetricEntity(id="row-1", count=392, active=True, tags=["a", "b"]))
+
+    assert table.df.schema["id"] == pl.Utf8
+    assert table.df.schema["count"] == pl.Int64
+    assert table.df.schema["active"] == pl.Boolean
+    assert table.df.schema["tags"] == pl.List(pl.Utf8)
+
+
+def test_storage_schema_parses_supported_annotation_forms(monkeypatch):
+    import sys
+    from typing import ForwardRef
+
+    import jsonjsdb.table as table_module
+
+    assert table_module._storage_schema_from_entity_type(None) == {}
+    assert table_module._storage_schema_from_entity_type(dict) == {}
+    assert (
+        table_module._annotation_to_polars_dtype(ForwardRef("Optional[int]"))
+        == pl.Int64
+    )
+    assert (
+        table_module._string_annotation_to_polars_dtype("Union[int, None]") == pl.Int64
+    )
+    assert table_module._string_annotation_to_polars_dtype("int | None") == pl.Int64
+    assert table_module._string_annotation_to_polars_dtype("List[str]") == pl.List(
+        pl.Utf8
+    )
+    assert table_module._string_annotation_to_polars_dtype("list[bool]") == pl.List(
+        pl.Boolean
+    )
+    assert table_module._string_annotation_to_polars_dtype("float") == pl.Float64
+    assert table_module._string_annotation_to_polars_dtype("UnknownType") is None
+    assert table_module._dtype_is_integer(object()) is False
+    assert table_module._dtype_is_float(object()) is False
+
+    if sys.version_info >= (3, 10):
+        assert table_module._annotation_to_polars_dtype(eval("int | None")) == pl.Int64
+
+    class MetricWithStringAnnotations:
+        count: "Optional[int]"
+
+    def fail_type_hints(_entity_type: type[object]) -> object:
+        raise TypeError
+
+    monkeypatch.setattr(table_module, "get_type_hints", fail_type_hints)
+    schema = table_module._storage_schema_from_entity_type(MetricWithStringAnnotations)
+    assert schema == {"count": pl.Int64}
+
+
 def test_typed_nullable_float_field_keeps_json_floats(tmp_path: Path):
     class Metric(TypedDict):
         id: str
