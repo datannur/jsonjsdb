@@ -4,9 +4,10 @@ import json
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, Union, cast
 
 import pytest
+import polars as pl
 
 import jsonjsdb
 from jsonjsdb import Jsonjsdb, Table
@@ -1300,6 +1301,254 @@ def test_save_nan_as_null(tmp_path: Path):
 
     js_raw = (tmp_path / "data.json.js").read_text()
     assert "NaN" not in js_raw
+
+
+def _load_jsonjs_payload(path: Path, table_name: str) -> list[list[object]]:
+    content = path.read_text()
+    prefix = f"jsonjs.data['{table_name}'] = "
+    assert content.startswith(prefix)
+    return json.loads(content[len(prefix) :])
+
+
+def test_typed_nullable_integer_fields_write_json_integers(tmp_path: Path):
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+        flag: Union[int, None]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    db.metric.add_all(
+        [
+            {"id": "row-1", "count": 392.0, "flag": 1.0},  # type: ignore[typeddict-item]
+            {"id": "row-2", "count": None, "flag": None},
+        ]
+    )
+    db.save(tmp_path, track_evolution=False)
+
+    rows = json.loads((tmp_path / "metric.json").read_text())
+    assert type(rows[0]["count"]) is int
+    assert rows[0]["count"] == 392
+    assert type(rows[0]["flag"]) is int
+    assert rows[0]["flag"] == 1
+    assert rows[1]["count"] is None
+    assert rows[1]["flag"] is None
+
+    js_rows = _load_jsonjs_payload(tmp_path / "metric.json.js", "metric")
+    assert type(js_rows[1][1]) is int
+    assert js_rows[1][1] == 392
+    assert type(js_rows[1][2]) is int
+    assert js_rows[1][2] == 1
+    assert js_rows[2][1] is None
+    assert js_rows[2][2] is None
+
+
+def test_typed_nullable_integer_fields_preserve_order_independently(tmp_path: Path):
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    for dirname, rows in {
+        "int_first": [
+            {"id": "row-1", "count": 392.0},  # type: ignore[typeddict-item]
+            {"id": "row-2", "count": None},
+        ],
+        "null_first": [
+            {"id": "row-2", "count": None},
+            {"id": "row-1", "count": 392},
+        ],
+    }.items():
+        db = MetricDB()
+        for row in rows:
+            db.metric.add(cast(Metric, row))
+        path = tmp_path / dirname
+        db.save(path, track_evolution=False)
+
+        json_rows = json.loads((path / "metric.json").read_text())
+        integer_row = next(row for row in json_rows if row["id"] == "row-1")
+        assert type(integer_row["count"]) is int
+        assert integer_row["count"] == 392
+
+        js_rows = _load_jsonjs_payload(path / "metric.json.js", "metric")
+        integer_js_row = next(row for row in js_rows[1:] if row[0] == "row-1")
+        assert type(integer_js_row[1]) is int
+        assert integer_js_row[1] == 392
+
+
+def test_typed_nullable_integer_updates_write_json_integers(tmp_path: Path):
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+        flag: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    db.metric.add_all(
+        [
+            {"id": "row-1", "count": None, "flag": None},
+            {"id": "row-2", "count": None, "flag": None},
+        ]
+    )
+    db.metric.update("row-1", count=392.0)
+    db.metric.update_many(["row-1", "row-2"], flag=1.0)
+    db.save(tmp_path, track_evolution=False)
+
+    rows = json.loads((tmp_path / "metric.json").read_text())
+    assert type(rows[0]["count"]) is int
+    assert rows[0]["count"] == 392
+    assert type(rows[0]["flag"]) is int
+    assert rows[0]["flag"] == 1
+    assert type(rows[1]["flag"]) is int
+    assert rows[1]["flag"] == 1
+
+    js_rows = _load_jsonjs_payload(tmp_path / "metric.json.js", "metric")
+    assert type(js_rows[1][1]) is int
+    assert js_rows[1][1] == 392
+    assert type(js_rows[1][2]) is int
+    assert js_rows[1][2] == 1
+    assert type(js_rows[2][2]) is int
+    assert js_rows[2][2] == 1
+
+
+def test_typed_integer_field_rejects_non_integral_float():
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    with pytest.raises(ValueError, match="non-integer values"):
+        db.metric.add({"id": "row-1", "count": 392.5})  # type: ignore[typeddict-item]
+
+
+def test_entity_type_schema_supports_dataclass_scalar_and_list_fields():
+    @dataclass
+    class MetricEntity:
+        id: str
+        count: int
+        active: bool
+        tags: list[str]
+
+    table: Table[MetricEntity] = Table("metric", entity_type=MetricEntity)
+    table.add(MetricEntity(id="row-1", count=392, active=True, tags=["a", "b"]))
+
+    assert table.df.schema["id"] == pl.Utf8
+    assert table.df.schema["count"] == pl.Int64
+    assert table.df.schema["active"] == pl.Boolean
+    assert table.df.schema["tags"] == pl.List(pl.Utf8)
+
+
+def test_storage_schema_parses_supported_annotation_forms(monkeypatch):
+    import sys
+    from typing import ForwardRef
+
+    import jsonjsdb.table as table_module
+
+    assert table_module._storage_schema_from_entity_type(None) == {}
+    assert table_module._storage_schema_from_entity_type(dict) == {}
+    assert (
+        table_module._annotation_to_polars_dtype(ForwardRef("Optional[int]"))
+        == pl.Int64
+    )
+    assert (
+        table_module._string_annotation_to_polars_dtype("Union[int, None]") == pl.Int64
+    )
+    assert table_module._string_annotation_to_polars_dtype("int | None") == pl.Int64
+    assert table_module._string_annotation_to_polars_dtype("List[str]") == pl.List(
+        pl.Utf8
+    )
+    assert table_module._string_annotation_to_polars_dtype("list[bool]") == pl.List(
+        pl.Boolean
+    )
+    assert table_module._string_annotation_to_polars_dtype("float") == pl.Float64
+    assert table_module._string_annotation_to_polars_dtype("UnknownType") is None
+    assert table_module._annotation_to_polars_dtype(object) is None
+    assert table_module._unwrap_optional(str) is str
+    assert table_module._dtype_is_integer(object()) is False
+    assert table_module._dtype_is_float(object()) is False
+
+    if sys.version_info >= (3, 10):
+        assert table_module._annotation_to_polars_dtype(eval("int | None")) == pl.Int64
+
+    class MetricWithStringAnnotations:
+        count: "Optional[int]"
+
+    def fail_type_hints(_entity_type: type[object]) -> object:
+        raise TypeError
+
+    monkeypatch.setattr(table_module, "get_type_hints", fail_type_hints)
+    schema = table_module._storage_schema_from_entity_type(MetricWithStringAnnotations)
+    assert schema == {"count": pl.Int64}
+
+
+def test_typed_nullable_float_field_keeps_json_floats(tmp_path: Path):
+    class Metric(TypedDict):
+        id: str
+        ratio: Optional[float]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    db.metric.add_all(
+        [
+            {"id": "row-1", "ratio": 1.0},
+            {"id": "row-2", "ratio": None},
+        ]
+    )
+    db.save(tmp_path, track_evolution=False)
+
+    rows = json.loads((tmp_path / "metric.json").read_text())
+    assert type(rows[0]["ratio"]) is float
+    assert rows[0]["ratio"] == 1.0
+    assert rows[1]["ratio"] is None
+
+    js_rows = _load_jsonjs_payload(tmp_path / "metric.json.js", "metric")
+    assert type(js_rows[1][1]) is float
+    assert js_rows[1][1] == 1.0
+    assert js_rows[2][1] is None
+
+
+def test_schema_less_dataframe_writer_preserves_integer_and_float_dtypes(
+    tmp_path: Path,
+):
+    from jsonjsdb.writer import write_table_json, write_table_jsonjs
+
+    df = pl.DataFrame(
+        {
+            "id": ["row-1", "row-2", "row-3"],
+            "count": pl.Series([1, None, 2], dtype=pl.Int64),
+            "ratio": pl.Series([1.0, None, 2.0], dtype=pl.Float64),
+        }
+    )
+
+    write_table_json(df, tmp_path / "data.json")
+    write_table_jsonjs(df, "data", tmp_path / "data.json.js")
+
+    rows = json.loads((tmp_path / "data.json").read_text())
+    assert type(rows[0]["count"]) is int
+    assert rows[0]["count"] == 1
+    assert type(rows[0]["ratio"]) is float
+    assert rows[0]["ratio"] == 1.0
+    assert rows[1]["count"] is None
+    assert rows[1]["ratio"] is None
+
+    js_rows = _load_jsonjs_payload(tmp_path / "data.json.js", "data")
+    assert type(js_rows[1][1]) is int
+    assert js_rows[1][1] == 1
+    assert type(js_rows[1][2]) is float
+    assert js_rows[1][2] == 1.0
+    assert js_rows[2][1] is None
+    assert js_rows[2][2] is None
 
 
 def test_load_nullable_column_with_late_value(tmp_path: Path):

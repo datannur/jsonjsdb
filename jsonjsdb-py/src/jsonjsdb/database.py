@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, get_type_hints
+from typing import Any, get_args, get_type_hints
 
 import polars as pl
 
@@ -79,10 +79,13 @@ class Jsonjsdb:
         for attr_name, hint in hints.items():
             origin = getattr(hint, "__origin__", None)
             if origin is Table:
+                entity_type = next(iter(get_args(hint)), None)
                 if attr_name in self._tables:
-                    setattr(self, attr_name, self._tables[attr_name])
+                    table = self._tables[attr_name]
+                    table.set_entity_type(entity_type)
+                    setattr(self, attr_name, table)
                 else:
-                    table = Table(attr_name, self)
+                    table = Table(attr_name, self, entity_type=entity_type)
                     self._tables[attr_name] = table
                     setattr(self, attr_name, table)
 
