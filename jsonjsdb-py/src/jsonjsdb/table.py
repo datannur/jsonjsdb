@@ -3,7 +3,19 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
+import types
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ForwardRef,
+    Generic,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    overload,
+)
 
 import polars as pl
 
@@ -47,6 +59,9 @@ class Table(Generic[T]):
         self._db = db
         self._df = df if df is not None else pl.DataFrame()
         self._entity_type = entity_type
+        self._storage_schema = _storage_schema_from_entity_type(entity_type)
+        if self._storage_schema:
+            self._df = self._apply_storage_schema(self._df)
         if runtime_fields is not None:
             self.runtime_fields = runtime_fields
         elif type(self).runtime_fields is not Table.runtime_fields:
@@ -224,7 +239,7 @@ class Table(Generic[T]):
             raise ValueError(f"Row with id '{row_id}' already exists")
 
         prepared = self._prepare_row_for_storage(row_dict)
-        new_df = pl.DataFrame([prepared])
+        new_df = self._apply_storage_schema(pl.DataFrame([prepared]))
 
         if self._df.is_empty():
             self._df = new_df
@@ -267,7 +282,9 @@ class Table(Generic[T]):
                 raise ValueError(f"IDs already exist: {conflicts}")
 
         prepared = [self._prepare_row_for_storage(d) for d in dicts]
-        new_df = pl.DataFrame(prepared, infer_schema_length=None)
+        new_df = self._apply_storage_schema(
+            pl.DataFrame(prepared, infer_schema_length=None)
+        )
 
         if self._df.is_empty():
             self._df = new_df
@@ -292,7 +309,7 @@ class Table(Generic[T]):
             else:
                 updates.append(pl.col(col_name))
 
-        self._df = self._df.select(updates)
+        self._df = self._apply_storage_schema(self._df.select(updates), set(kwargs))
 
     def update_many(self, ids: list[ID], **kwargs: Any) -> int:
         """Update multiple rows by ID. Returns count of updated rows."""
@@ -317,7 +334,7 @@ class Table(Generic[T]):
             else:
                 updates.append(pl.col(col_name))
 
-        self._df = self._df.select(updates)
+        self._df = self._apply_storage_schema(self._df.select(updates), set(kwargs))
         return count
 
     def remove(self, id: ID) -> bool:
@@ -356,6 +373,168 @@ class Table(Generic[T]):
             else:
                 prepared[key] = value
         return prepared
+
+    def set_entity_type(self, entity_type: type[T] | None) -> None:
+        self._entity_type = entity_type
+        self._storage_schema = _storage_schema_from_entity_type(entity_type)
+        if self._storage_schema:
+            self._df = self._apply_storage_schema(self._df)
+
+    def _apply_storage_schema(
+        self, df: pl.DataFrame, column_names: set[str] | None = None
+    ) -> pl.DataFrame:
+        if not self._storage_schema or df.is_empty():
+            return df
+
+        schema_columns = (
+            set(self._storage_schema) if column_names is None else column_names
+        )
+        transforms: list[pl.Expr] = []
+        for col_name in df.columns:
+            col = pl.col(col_name)
+            if col_name in schema_columns and col_name in self._storage_schema:
+                target_dtype = self._storage_schema[col_name]
+                _validate_storage_cast(df, col_name, target_dtype)
+                col = col.cast(target_dtype)
+            transforms.append(col.alias(col_name))
+        return df.select(transforms)
+
+
+def _storage_schema_from_entity_type(
+    entity_type: type[Any] | None,
+) -> dict[str, Any]:
+    if entity_type is None or entity_type is dict:
+        return {}
+
+    annotations = _entity_annotations(entity_type)
+    schema: dict[str, Any] = {}
+    for field_name, annotation in annotations.items():
+        dtype = _annotation_to_polars_dtype(annotation)
+        if dtype is not None:
+            schema[field_name] = dtype
+    return schema
+
+
+def _validate_storage_cast(df: pl.DataFrame, col_name: str, target_dtype: Any) -> None:
+    source_dtype = df.schema[col_name]
+    if not (_dtype_is_integer(target_dtype) and _dtype_is_float(source_dtype)):
+        return
+
+    col = pl.col(col_name)
+    invalid = df.filter(col.is_not_null() & (col.is_nan() | (col != col.floor())))
+    if not invalid.is_empty():
+        raise ValueError(
+            f"Column '{col_name}' contains non-integer values and cannot be stored "
+            f"as {target_dtype}"
+        )
+
+
+def _dtype_is_integer(dtype: Any) -> bool:
+    is_integer = getattr(dtype, "is_integer", None)
+    return bool(is_integer()) if callable(is_integer) else False
+
+
+def _dtype_is_float(dtype: Any) -> bool:
+    is_float = getattr(dtype, "is_float", None)
+    return bool(is_float()) if callable(is_float) else False
+
+
+def _entity_annotations(entity_type: type[Any]) -> dict[str, Any]:
+    if dataclasses.is_dataclass(entity_type):
+        return {field.name: field.type for field in dataclasses.fields(entity_type)}
+
+    try:
+        return get_type_hints(entity_type)
+    except TypeError:
+        return dict(getattr(entity_type, "__annotations__", {}))
+
+
+def _annotation_to_polars_dtype(annotation: Any) -> Any | None:
+    annotation = _unwrap_optional(annotation)
+
+    if isinstance(annotation, ForwardRef):
+        annotation = annotation.__forward_arg__
+
+    if isinstance(annotation, str):
+        return _string_annotation_to_polars_dtype(annotation)
+
+    origin = get_origin(annotation)
+    if origin is list:
+        item_dtype = _annotation_to_polars_dtype(get_args(annotation)[0])
+        return pl.List(item_dtype or pl.Utf8)
+
+    if annotation is bool:
+        return pl.Boolean
+    if annotation is int:
+        return pl.Int64
+    if annotation is float:
+        return pl.Float64
+    if annotation is str:
+        return pl.Utf8
+    return None
+
+
+def _unwrap_optional(annotation: Any) -> Any:
+    if isinstance(annotation, ForwardRef):
+        annotation = annotation.__forward_arg__
+
+    origin = get_origin(annotation)
+    union_type = getattr(types, "UnionType", None)
+    if origin is Union or (union_type is not None and origin is union_type):
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if len(args) == 1:
+            return args[0]
+
+    return annotation
+
+
+def _string_annotation_to_polars_dtype(annotation: str) -> Any | None:
+    normalized = annotation.strip().replace("typing.", "")
+
+    optional_inner = _bracket_inner(normalized, "Optional")
+    if optional_inner is not None:
+        return _string_annotation_to_polars_dtype(optional_inner)
+
+    union_inner = _bracket_inner(normalized, "Union")
+    if union_inner is not None:
+        union_parts = [part.strip() for part in union_inner.split(",")]
+        non_null_parts = [
+            part for part in union_parts if part not in {"None", "NoneType"}
+        ]
+        if len(non_null_parts) == 1:
+            return _string_annotation_to_polars_dtype(non_null_parts[0])
+
+    pipe_parts = [part.strip() for part in normalized.split("|")]
+    if len(pipe_parts) > 1:
+        non_null_parts = [
+            part for part in pipe_parts if part not in {"None", "NoneType"}
+        ]
+        if len(non_null_parts) == 1:
+            return _string_annotation_to_polars_dtype(non_null_parts[0])
+
+    list_inner = _bracket_inner(normalized, "list") or _bracket_inner(
+        normalized, "List"
+    )
+    if list_inner is not None:
+        item_dtype = _string_annotation_to_polars_dtype(list_inner)
+        return pl.List(item_dtype or pl.Utf8)
+
+    if normalized == "bool":
+        return pl.Boolean
+    if normalized == "int":
+        return pl.Int64
+    if normalized == "float":
+        return pl.Float64
+    if normalized == "str":
+        return pl.Utf8
+    return None
+
+
+def _bracket_inner(annotation: str, name: str) -> str | None:
+    prefix = f"{name}["
+    if annotation.startswith(prefix) and annotation.endswith("]"):
+        return annotation[len(prefix) : -1].strip()
+    return None
 
 
 class HavingProxy(Generic[T]):

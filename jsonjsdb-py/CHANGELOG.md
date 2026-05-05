@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.7
+
+fix: Preserve typed nullable integer values as JSON integers in `.json` and `.json.js` exports
+
 ## 0.8.6
 
 fix: `load_table()` fails with `ComputeError` when a nullable column is all `null` in the first inferred rows and contains a numeric value later
