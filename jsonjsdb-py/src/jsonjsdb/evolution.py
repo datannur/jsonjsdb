@@ -114,7 +114,7 @@ def _df_to_dict_by_id(df: pl.DataFrame) -> dict[str | int, dict[str, Any]]:
         row_id = row.get("id")
         if row_id is not None:
             # Normalize id to string for consistent comparison
-            key = str(row_id) if row_id is not None else row_id
+            key = str(row_id)
             result[key] = row
     return result
 
