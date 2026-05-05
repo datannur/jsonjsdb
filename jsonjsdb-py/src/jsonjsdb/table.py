@@ -452,9 +452,6 @@ def _entity_annotations(entity_type: type[Any]) -> dict[str, Any]:
 def _annotation_to_polars_dtype(annotation: Any) -> Any | None:
     annotation = _unwrap_optional(annotation)
 
-    if isinstance(annotation, ForwardRef):
-        annotation = annotation.__forward_arg__
-
     if isinstance(annotation, str):
         return _string_annotation_to_polars_dtype(annotation)
 

@@ -1471,6 +1471,8 @@ def test_storage_schema_parses_supported_annotation_forms(monkeypatch):
     )
     assert table_module._string_annotation_to_polars_dtype("float") == pl.Float64
     assert table_module._string_annotation_to_polars_dtype("UnknownType") is None
+    assert table_module._annotation_to_polars_dtype(object) is None
+    assert table_module._unwrap_optional(str) is str
     assert table_module._dtype_is_integer(object()) is False
     assert table_module._dtype_is_float(object()) is False
 
