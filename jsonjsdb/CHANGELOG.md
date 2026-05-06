@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.8.11 (2026-05-06)
+
+- add: `shouldTransformKeys` load option to preserve source row keys when needed
+
 ## 0.8.10 (2026-03-04)
 
 - fix: update dependencies
