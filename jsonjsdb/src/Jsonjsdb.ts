@@ -24,6 +24,13 @@ type InitOption = {
   validIdChars?: string
 }
 
+type LoadOption = {
+  useCache?: boolean
+  version?: number | string
+  shouldStandardizeIds?: boolean
+  shouldTransformKeys?: boolean
+}
+
 type ForeignTableObj = {
   [tableName: string]: string | number | { id: string | number } | undefined
 }
@@ -122,13 +129,17 @@ export default class Jsonjsdb<
   async load(
     filePath: string,
     name: string,
-    shouldStandardizeIds = true,
+    option: boolean | LoadOption = true,
   ): Promise<unknown[]> {
+    const loadOption =
+      typeof option === 'boolean' ? { shouldStandardizeIds: option } : option
+
     filePath = this.config.path + '/' + filePath
     const data = await this.loader.loadJsonjs(filePath, name, {
-      useCache: false,
-      version: Date.now(),
-      shouldStandardizeIds,
+      useCache: loadOption.useCache ?? false,
+      version: loadOption.version ?? Date.now(),
+      shouldStandardizeIds: loadOption.shouldStandardizeIds,
+      shouldTransformKeys: loadOption.shouldTransformKeys,
     })
     return data
   }

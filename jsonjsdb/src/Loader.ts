@@ -16,6 +16,7 @@ type LoadOption = {
   useCache?: boolean
   version?: number | string
   shouldStandardizeIds?: boolean
+  shouldTransformKeys?: boolean
 }
 
 declare global {
@@ -121,9 +122,14 @@ export default class Loader {
           data = this.arrayToObject(
             data as unknown[][],
             option?.shouldStandardizeIds,
+            option?.shouldTransformKeys,
           )
         } else {
-          data = this.applyTransform(data, option?.shouldStandardizeIds)
+          data = this.applyTransform(
+            data,
+            option?.shouldStandardizeIds,
+            option?.shouldTransformKeys,
+          )
         }
         resolve(data)
         document.querySelectorAll(`script[src="${src}"]`)[0].remove()
@@ -165,9 +171,14 @@ export default class Loader {
         data = this.arrayToObject(
           data as unknown[][],
           option?.shouldStandardizeIds,
+          option?.shouldTransformKeys,
         )
       } else {
-        data = this.applyTransform(data, option?.shouldStandardizeIds)
+        data = this.applyTransform(
+          data,
+          option?.shouldStandardizeIds,
+          option?.shouldTransformKeys,
+        )
       }
 
       if (option?.useCache) this.saveToCache(data, tableName)
@@ -205,9 +216,17 @@ export default class Loader {
   private arrayToObject(
     data: unknown[][],
     shouldStandardizeIds = true,
+    shouldTransformKeys = true,
   ): Record<string, unknown>[] {
     if (data.length === 0) return []
-    const headers = data[0].map(h => this.snakeToCamel(String(h)))
+    const sourceHeaders = data[0].map(h => String(h))
+    const headers = shouldTransformKeys
+      ? sourceHeaders.map(header => this.snakeToCamel(header))
+      : sourceHeaders
+    const isIdHeaders = sourceHeaders.map(
+      header =>
+        shouldStandardizeIds && this.isVariableId(this.snakeToCamel(header)),
+    )
     const headersLength = headers.length
     const dataLength = data.length
     const records = new Array<Record<string, unknown>>(dataLength - 1)
@@ -217,9 +236,7 @@ export default class Loader {
       for (let j = 0; j < headersLength; j += 1) {
         const value = row[j]
         rowObject[headers[j]] =
-          typeof value === 'string' &&
-          shouldStandardizeIds &&
-          this.isVariableId(headers[j])
+          typeof value === 'string' && isIdHeaders[j]
             ? this.standardizeId(value)
             : value
       }
@@ -231,16 +248,19 @@ export default class Loader {
   private applyTransform(
     data: unknown[],
     shouldStandardizeIds = true,
+    shouldTransformKeys = true,
   ): unknown[] {
     if (data.length === 0) return data
 
     const firstRow = data[0] as Record<string, unknown>
     const keys = Object.keys(firstRow)
     const keysLength = keys.length
-    const camelKeys = keys.map(key => this.snakeToCamel(key))
-    const isIdKeys = camelKeys.map(
-      camelKey => shouldStandardizeIds && this.isVariableId(camelKey),
-    )
+    const outputKeys = shouldTransformKeys
+      ? keys.map(key => this.snakeToCamel(key))
+      : keys
+    const isIdKeys = keys
+      .map(key => this.snakeToCamel(key))
+      .map(camelKey => shouldStandardizeIds && this.isVariableId(camelKey))
     const dataLength = data.length
     const records = new Array<Record<string, unknown>>(dataLength)
 
@@ -249,7 +269,7 @@ export default class Loader {
       const rowObject: Record<string, unknown> = {}
       for (let j = 0; j < keysLength; j += 1) {
         const value = row[keys[j]]
-        rowObject[camelKeys[j]] =
+        rowObject[outputKeys[j]] =
           typeof value === 'string' && isIdKeys[j]
             ? this.standardizeId(value)
             : value
@@ -273,6 +293,7 @@ export default class Loader {
       useCache: boolean
       version: number | string
       shouldStandardizeIds?: boolean
+      shouldTransformKeys?: boolean
     },
   ): Promise<unknown[]> {
     if (path.slice(-1) === '/') path = path.slice(0, -1)

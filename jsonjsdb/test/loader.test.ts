@@ -7,8 +7,13 @@ type LoaderPrivate = {
   arrayToObject: (
     data: unknown[][],
     shouldStandardizeIds?: boolean,
+    shouldTransformKeys?: boolean,
   ) => Record<string, unknown>[]
-  applyTransform: (data: unknown[], shouldStandardizeIds?: boolean) => unknown[]
+  applyTransform: (
+    data: unknown[],
+    shouldStandardizeIds?: boolean,
+    shouldTransformKeys?: boolean,
+  ) => unknown[]
   standardizeId: (id: string) => string
   isVariableId: (variable: string) => boolean
 }
@@ -145,6 +150,34 @@ describe('Loader', () => {
         { id: 2, name: 'Bob' },
       ])
     })
+
+    it('should transform snake case headers by default', async () => {
+      const result = loaderPrivate.arrayToObject([
+        ['colonne_entree', 'colonneEntree', 'Nom colonne'],
+        ['one', 'two', 'three'],
+      ])
+
+      expect(result).toEqual([{ colonneEntree: 'two', 'Nom colonne': 'three' }])
+    })
+
+    it('should preserve headers when key transform is disabled', async () => {
+      const result = loaderPrivate.arrayToObject(
+        [
+          ['colonne_entree', 'colonneEntree', 'Nom colonne'],
+          ['one', 'two', 'three'],
+        ],
+        true,
+        false,
+      )
+
+      expect(result).toEqual([
+        {
+          colonne_entree: 'one',
+          colonneEntree: 'two',
+          'Nom colonne': 'three',
+        },
+      ])
+    })
   })
 
   describe('standardizeId()', () => {
@@ -250,9 +283,61 @@ describe('Loader', () => {
         { id: 'usr@001', userId: 'admin#123', name: 'Alice' },
       ])
     })
+
+    it('should standardize IDs independently from key transform', async () => {
+      const result = loaderPrivate.arrayToObject(
+        [
+          ['id', 'user_id', 'name'],
+          ['usr@001', 'admin#123', 'Alice'],
+        ],
+        true,
+        false,
+      )
+
+      expect(result).toEqual([
+        { id: 'usr001', user_id: 'admin123', name: 'Alice' },
+      ])
+    })
+
+    it('should preserve ID values when standardization is disabled and key transform is disabled', async () => {
+      const result = loaderPrivate.arrayToObject(
+        [
+          ['id', 'user_id', 'name'],
+          ['usr@001', 'admin#123', 'Alice'],
+        ],
+        false,
+        false,
+      )
+
+      expect(result).toEqual([
+        { id: 'usr@001', user_id: 'admin#123', name: 'Alice' },
+      ])
+    })
   })
 
   describe('applyTransform() with ID standardization', () => {
+    it('should transform snake case keys by default', async () => {
+      const data = [{ colonne_entree: 'one', colonneEntree: 'two' }]
+
+      const result = loaderPrivate.applyTransform(data)
+
+      expect(result).toEqual([{ colonneEntree: 'two' }])
+    })
+
+    it('should preserve object keys when key transform is disabled', async () => {
+      const data = [
+        {
+          colonne_entree: 'one',
+          colonneEntree: 'two',
+          'Nom colonne': 'three',
+        },
+      ]
+
+      const result = loaderPrivate.applyTransform(data, true, false)
+
+      expect(result).toEqual(data)
+    })
+
     it('should standardize IDs in object format data', async () => {
       const data = [
         { id: 'usr@001', userId: 'admin#123', name: 'Alice' },
@@ -284,6 +369,16 @@ describe('Loader', () => {
 
       expect(result).toEqual([
         { id: 'usr@001', userId: 'admin#123', name: 'Alice' },
+      ])
+    })
+
+    it('should standardize IDs independently from object key transform', async () => {
+      const data = [{ id: 'usr@001', user_id: 'admin#123', name: 'Alice' }]
+
+      const result = loaderPrivate.applyTransform(data, true, false)
+
+      expect(result).toEqual([
+        { id: 'usr001', user_id: 'admin123', name: 'Alice' },
       ])
     })
 
