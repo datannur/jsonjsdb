@@ -12,7 +12,7 @@ A comprehensive client-side relational database solution for static Single Page 
 - [🚀 Quick Start](#-quick-start)
 - [📦 Packages](#-packages)
   - [jsonjsdb - Core Library](#jsonjsdb---core-library)
-  - [jsonjsdb-builder - Build Tool](#jsonjsdb-builder---build-tool)
+  - [jsonjsdb-py - Python Library](#jsonjsdb-py---python-library)
 - [🎯 Use Cases & Limitations](#-use-cases--limitations)
   - [✅ Perfect for](#-perfect-for)
   - [⚠️ Limitations](#️-limitations)
@@ -35,7 +35,7 @@ const users = db.getAll('user')
 
 ## 📦 Packages
 
-This monorepo contains two complementary packages:
+This monorepo contains two actively maintained packages:
 
 ### [jsonjsdb](./jsonjsdb) - Core Library
 
@@ -49,16 +49,16 @@ The main client-side database library for frontend applications.
 
 **[📖 View Documentation](./jsonjsdb/README.md)**
 
-### [jsonjsdb-builder](./jsonjsdb-builder) - Build Tool
+### [jsonjsdb-py](./jsonjsdb-py) - Python Library
 
-Development tooling to convert Excel files to jsonjs database format.
+Python library for JSONJS databases with full CRUD support and relational queries.
 
-- ✅ Excel to .json and .json.js conversion
-- ✅ Vite integration
-- ✅ Watch mode for development
-- ✅ Automatic database updates
+- ✅ Full CRUD operations
+- ✅ Typed API support
+- ✅ Relational queries and filtering
+- ✅ Compatible with TypeScript jsonjsdb file format
 
-**[📖 View Documentation](./jsonjsdb-builder/README.md)**
+**[📖 View Documentation](./jsonjsdb-py/README.md)**
 
 ## 🎯 Use Cases & Limitations
 
