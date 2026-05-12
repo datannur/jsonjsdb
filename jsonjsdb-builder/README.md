@@ -4,6 +4,16 @@
 
 # Jsonjsdb Builder
 
+## Deprecation Notice
+
+jsonjsdb-builder is deprecated and no longer maintained.
+
+- Existing projects can continue using current versions.
+- No new features, bug fixes, or security updates are planned.
+- New projects should not adopt this package.
+- There is currently no official replacement package.
+- If you depend on this tool, keep using a pinned version or maintain a fork.
+
 A development tool for converting relational database tables into jsonjs format compatible with [jsonjsdb](../jsonjsdb).
 
 Currently supports Excel (.xlsx) files as source, where each file represents one database table.
@@ -21,6 +31,7 @@ npm install jsonjsdb-builder
 
 ## Table of Contents
 
+- [Deprecation Notice](#deprecation-notice)
 - [Basic Usage](#basic-usage)
 - [Markdown Import](#markdown-import)
 - [Preview Generation](#preview-generation)
