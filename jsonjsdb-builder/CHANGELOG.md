@@ -1,5 +1,10 @@
 # jsonjsdb-builder
 
+## 0.6.12 (2026-05-12)
+
+- deprecate: package is deprecated and no longer maintained; existing installs continue to work
+- docs: clarify there is no official replacement package
+
 ## 0.6.11 (2026-04-07)
 
 - fix: skip table regeneration when source file mtime changes but content is identical (e.g. after git checkout)
