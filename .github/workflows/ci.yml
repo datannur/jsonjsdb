@@ -201,7 +201,7 @@ jobs:
       - name: Audit dependencies
         if: steps.python-changes.outputs.changed == 'true'
         working-directory: jsonjsdb-py
-        run: uv export --no-dev --no-hashes | uv run pip-audit --disable-pip --no-deps -r /dev/stdin
+        run: uv export --no-dev --no-hashes | uvx pip-audit --disable-pip --no-deps -r /dev/stdin
 
       - name: Run checks
         if: steps.python-changes.outputs.changed == 'true'
