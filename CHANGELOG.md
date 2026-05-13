@@ -12,6 +12,10 @@ For detailed changes, see individual package changelogs:
 
 ## Project Overview
 
+### 2026-05-13
+
+- add: dependency release cooldowns for npm and uv
+
 ### 2025-12-14
 
 - refactor: migrate to organisation datannur and use npm trusted publisher
