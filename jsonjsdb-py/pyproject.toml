@@ -36,7 +36,6 @@ dev = [
   "diff-cover>=9.0.0",
   "ruff>=0.4.0",
   "pyright>=1.1.400",
-  "pip-audit>=2.7.0",
 ]
 
 [tool.pytest.ini_options]
