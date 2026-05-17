@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.9.0 (2026-05-17)
+
+- add: controlled mutation APIs with append-only `insert()`, restricted `update()`, idempotent field-based `addRelation()`, and bulk `addRelations()`
+
 ## 0.8.11 (2026-05-06)
 
 - add: `shouldTransformKeys` load option to preserve source row keys when needed

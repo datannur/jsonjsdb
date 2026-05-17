@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import Jsonjsdb from '../src/Jsonjsdb'
 
 type JsonjsdbPrivate = {
@@ -10,6 +10,32 @@ type LoaderPrivate = {
   validIdPattern: RegExp
   invalidIdPattern: RegExp
   standardizeId: (id: string) => string
+}
+
+type MutableJsonjsdb = Jsonjsdb & {
+  insert: (
+    table: string,
+    row: Record<string, unknown>,
+  ) => Record<string, unknown>
+  update: (
+    table: string,
+    id: string | number,
+    patch: Record<string, unknown>,
+  ) => Record<string, unknown> | undefined
+  addRelation: (
+    table: string,
+    id: string | number,
+    relationField: string,
+    relatedId: string | number,
+    options?: { ifExists?: 'throw' | 'ignore' },
+  ) => boolean
+  addRelations: (
+    table: string,
+    id: string | number,
+    relationField: string,
+    relatedIds: Array<string | number>,
+    options?: { ifExists?: 'throw' | 'ignore' },
+  ) => { added: Array<string | number>; ignored: Array<string | number> }
 }
 
 describe('jsonjsdb', () => {
@@ -128,17 +154,25 @@ describe('jsonjsdb', () => {
       it('should return 2 records when limit is 2', () => {
         const result = db.getAll('user', undefined, { limit: 2 })
         expect(result).toHaveLength(2)
+        expect(result.map(user => user.id)).toEqual([1, 2])
       })
 
       it('should work if an id is passed', () => {
         const result = db.getAll('email', { user: 1 })
-        expect(result[0]).toHaveProperty('name')
+        expect(result).toHaveLength(1)
+        expect(result.map(email => email.id)).toEqual(['email_1'])
       })
 
       it('should work if an object is passed', () => {
         const user = { id: 1 }
         const result = db.getAll('email', { user })
-        expect(result[0]).toHaveProperty('name')
+        expect(result).toHaveLength(1)
+        expect(result.map(email => email.id)).toEqual(['email_1'])
+      })
+
+      it('should return empty array when foreign id has no related rows', () => {
+        const result = db.getAll('email', { user: 999 })
+        expect(result).toEqual([])
       })
 
       it('should get user 1 docs', () => {
@@ -147,7 +181,32 @@ describe('jsonjsdb', () => {
         expect(user!.id).toBeDefined()
         const docs = db.getAll('doc', { user: user!.id })
         expect(docs).toBeInstanceOf(Array)
-        expect(docs.length).toBeGreaterThan(0)
+        expect(docs.map(doc => doc.id)).toEqual([3, 4, 5])
+      })
+
+      it('should apply limit when reading related rows through an array index', () => {
+        const docs = db.getAll('doc', { user: 1 }, { limit: 2 })
+        expect(docs.map(doc => doc.id)).toEqual([3, 4])
+      })
+
+      it('should get tags for a user through the many-to-many index', () => {
+        const tags = db.getAll('tag', { user: 1 })
+        expect(tags.map(tag => tag.id)).toEqual([1, 2])
+      })
+
+      it('should get users for a tag through the reverse many-to-many index', () => {
+        const users = db.getAll('user', { tag: 2 })
+        expect(users.map(user => user.id)).toEqual([1, 2])
+      })
+
+      it('should apply limit when reading related rows through a many-to-many index', () => {
+        const users = db.getAll('user', { tag: 2 }, { limit: 1 })
+        expect(users.map(user => user.id)).toEqual([1])
+      })
+
+      it('should return one row for a single-value many-to-many index', () => {
+        const tags = db.getAll('tag', { user: 2 })
+        expect(tags.map(tag => tag.id)).toEqual([2])
       })
     })
 
@@ -193,23 +252,290 @@ describe('jsonjsdb', () => {
       })
 
       it('should count related records correctly', () => {
-        // Count emails for user 1
         const emailCount = db.countRelated('user', 1, 'email')
-        expect(typeof emailCount).toBe('number')
-        expect(emailCount).toBeGreaterThanOrEqual(0)
+        expect(emailCount).toBe(1)
       })
 
       it('should count docs for user correctly', () => {
-        // Count docs for user 1
         const docCount = db.countRelated('user', 1, 'doc')
-        expect(typeof docCount).toBe('number')
-        expect(docCount).toBeGreaterThanOrEqual(0)
+        expect(docCount).toBe(3)
+      })
+
+      it('should count many-to-many rows from the left side', () => {
+        const tagCount = db.countRelated('user', 1, 'tag')
+        expect(tagCount).toBe(2)
+      })
+
+      it('should count many-to-many rows from the right side', () => {
+        const userCount = db.countRelated('tag', 2, 'user')
+        expect(userCount).toBe(2)
+      })
+
+      it('should count a single many-to-many row', () => {
+        const tagCount = db.countRelated('user', 2, 'tag')
+        expect(tagCount).toBe(1)
       })
 
       it('should return 0 when no related records exist', () => {
         // Use a user that likely has no related records
         const result = db.countRelated('user', 999, 'email')
         expect(result).toBe(0)
+      })
+    })
+
+    describe('controlled mutations', () => {
+      let mutableDb: MutableJsonjsdb
+
+      beforeEach(async () => {
+        mutableDb = new Jsonjsdb({
+          dbKey: 'gdf9898fds',
+          browserKey: 'gdf9898fdsS',
+          path: 'test/db',
+        }) as MutableJsonjsdb
+        await mutableDb.init()
+        expect(typeof mutableDb.update).toBe('function')
+        expect(typeof mutableDb.insert).toBe('function')
+        expect(typeof mutableDb.addRelation).toBe('function')
+        expect(typeof mutableDb.addRelations).toBe('function')
+      })
+
+      describe('update()', () => {
+        it('should update a non-relational field in place', () => {
+          const result = mutableDb.update('user', 1, { name: 'updated user 1' })
+
+          expect(result).toHaveProperty('id', 1)
+          expect(result).toHaveProperty('name', 'updated user 1')
+          expect(mutableDb.get('user', 1)).toHaveProperty(
+            'name',
+            'updated user 1',
+          )
+          expect(mutableDb.getAll('user').map(user => user.id)).toEqual([
+            1, 2, 3, 4, 5,
+          ])
+        })
+
+        it('should leave indexes unchanged after updating a non-relational field', () => {
+          mutableDb.update('user', 1, { name: 'updated user 1' })
+
+          expect(
+            mutableDb.getAll('email', { user: 1 }).map(email => email.id),
+          ).toEqual(['email_1'])
+          expect(
+            mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
+          ).toEqual([1, 2])
+          expect(mutableDb.countRelated('user', 1, 'tag')).toBe(2)
+        })
+
+        it('should return undefined when updating a missing row', () => {
+          const result = mutableDb.update('user', 999, { name: 'missing' })
+
+          expect(result).toBeUndefined()
+        })
+
+        it('should reject updates to indexed or relational fields', () => {
+          expect(() => mutableDb.update('user', 1, { id: 10 })).toThrow()
+          expect(() => mutableDb.update('user', 1, { parentId: 2 })).toThrow()
+          expect(() =>
+            mutableDb.update('email', 'email_1', { userId: 2 }),
+          ).toThrow()
+          expect(() =>
+            mutableDb.update('user', 1, { docIds: '1, 2' }),
+          ).toThrow()
+
+          expect(mutableDb.get('user', 1)).toHaveProperty('id', 1)
+          expect(
+            mutableDb.getAll('email', { user: 1 }).map(email => email.id),
+          ).toEqual(['email_1'])
+          expect(
+            mutableDb.getAll('doc', { user: 1 }).map(doc => doc.id),
+          ).toEqual([3, 4, 5])
+        })
+      })
+
+      describe('insert()', () => {
+        it('should append a row and update the primary index', () => {
+          const result = mutableDb.insert('user', {
+            id: 6,
+            name: 'user 6',
+          })
+
+          expect(result).toHaveProperty('id', 6)
+          expect(mutableDb.get('user', 6)).toHaveProperty('name', 'user 6')
+          expect(mutableDb.exists('user', 6)).toBe(true)
+          expect(mutableDb.getAll('user').map(user => user.id)).toEqual([
+            1, 2, 3, 4, 5, 6,
+          ])
+        })
+
+        it('should reject duplicate ids without appending the row', () => {
+          expect(() =>
+            mutableDb.insert('user', {
+              id: 1,
+              name: 'duplicate user',
+            }),
+          ).toThrow()
+
+          expect(mutableDb.getAll('user').map(user => user.id)).toEqual([
+            1, 2, 3, 4, 5,
+          ])
+          expect(mutableDb.get('user', 1)).toHaveProperty('name', 'user 1')
+        })
+
+        it('should reject inserts into missing tables', () => {
+          expect(() =>
+            mutableDb.insert('missing_table', {
+              id: 1,
+              name: 'missing table row',
+            }),
+          ).toThrow()
+        })
+
+        it('should update foreign-key indexes for an inserted row', () => {
+          mutableDb.insert('email', {
+            id: 'email_3',
+            name: 'email 3',
+            userId: 1,
+            adminId: 2,
+          })
+
+          expect(mutableDb.get('email', 'email_3')).toHaveProperty(
+            'name',
+            'email 3',
+          )
+          expect(
+            mutableDb.getAll('email', { user: 1 }).map(email => email.id),
+          ).toEqual(['email_1', 'email_3'])
+          expect(mutableDb.countRelated('user', 1, 'email')).toBe(2)
+        })
+
+        it('should update many-to-many indexes for inserted rows with multi-relation fields', () => {
+          mutableDb.insert('user', {
+            id: 6,
+            name: 'user 6',
+            docIds: '1, 2',
+          })
+
+          expect(
+            mutableDb.getAll('doc', { user: 6 }).map(doc => doc.id),
+          ).toEqual([1, 2])
+          expect(mutableDb.countRelated('user', 6, 'doc')).toBe(2)
+        })
+      })
+
+      describe('addRelation()', () => {
+        it('should add a multi-relation and update indexes in both directions', () => {
+          const result = mutableDb.addRelation('user', 1, 'tagIds', 3)
+
+          expect(result).toBe(true)
+          expect(
+            mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
+          ).toEqual([1, 2, 3])
+          expect(
+            mutableDb.getAll('user', { tag: 3 }).map(user => user.id),
+          ).toEqual([1])
+          expect(mutableDb.countRelated('user', 1, 'tag')).toBe(3)
+          expect(mutableDb.countRelated('tag', 3, 'user')).toBe(1)
+        })
+
+        it('should keep the source multi-relation field consistent when it exists', () => {
+          mutableDb.addRelation('user', 1, 'docIds', 2)
+
+          expect(mutableDb.get('user', 1)).toHaveProperty(
+            'docIds',
+            '3, 4, 5, 2',
+          )
+          expect(
+            mutableDb.getAll('doc', { user: 1 }).map(doc => doc.id),
+          ).toEqual([3, 4, 5, 2])
+        })
+
+        it('should reject duplicate relations without changing indexes', () => {
+          expect(() => mutableDb.addRelation('user', 1, 'tagIds', 2)).toThrow()
+
+          expect(
+            mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
+          ).toEqual([1, 2])
+          expect(mutableDb.countRelated('user', 1, 'tag')).toBe(2)
+        })
+
+        it('should ignore duplicate relations when ifExists is ignore', () => {
+          const result = mutableDb.addRelation('user', 1, 'tagIds', 2, {
+            ifExists: 'ignore',
+          })
+
+          expect(result).toBe(false)
+          expect(
+            mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
+          ).toEqual([1, 2])
+          expect(mutableDb.countRelated('user', 1, 'tag')).toBe(2)
+        })
+
+        it('should reject duplicate relations when stored ids and input ids use different primitive types', () => {
+          expect(() => mutableDb.addRelation('user', 1, 'docIds', 3)).toThrow()
+
+          expect(
+            mutableDb.getAll('doc', { user: 1 }).map(doc => doc.id),
+          ).toEqual([3, 4, 5])
+          expect(mutableDb.countRelated('user', 1, 'doc')).toBe(3)
+        })
+
+        it('should reject missing source or related rows', () => {
+          expect(() =>
+            mutableDb.addRelation('user', 999, 'tagIds', 3),
+          ).toThrow()
+          expect(() =>
+            mutableDb.addRelation('user', 1, 'tagIds', 999),
+          ).toThrow()
+        })
+
+        it('should reject fields that are not multi-relation fields', () => {
+          expect(() => mutableDb.addRelation('user', 1, 'tagId', 3)).toThrow()
+          expect(() => mutableDb.addRelation('user', 1, 'name', 3)).toThrow()
+        })
+      })
+
+      describe('addRelations()', () => {
+        it('should add several relations and update indexes once per related id', () => {
+          const result = mutableDb.addRelations('user', 1, 'tagIds', [3, 4])
+
+          expect(result).toEqual({ added: [3, 4], ignored: [] })
+          expect(
+            mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
+          ).toEqual([1, 2, 3, 4])
+          expect(
+            mutableDb.getAll('user', { tag: 4 }).map(user => user.id),
+          ).toEqual([1])
+          expect(mutableDb.countRelated('user', 1, 'tag')).toBe(4)
+        })
+
+        it('should ignore existing relations and duplicate batch ids when ifExists is ignore', () => {
+          const result = mutableDb.addRelations(
+            'user',
+            1,
+            'tagIds',
+            [2, 3, 3],
+            {
+              ifExists: 'ignore',
+            },
+          )
+
+          expect(result).toEqual({ added: [3], ignored: [2, 3] })
+          expect(
+            mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
+          ).toEqual([1, 2, 3])
+          expect(mutableDb.countRelated('user', 1, 'tag')).toBe(3)
+        })
+
+        it('should reject duplicate relations by default without partial writes', () => {
+          expect(() =>
+            mutableDb.addRelations('user', 1, 'tagIds', [3, 2, 4]),
+          ).toThrow()
+
+          expect(
+            mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
+          ).toEqual([1, 2])
+          expect(mutableDb.countRelated('user', 1, 'tag')).toBe(2)
+        })
       })
     })
 

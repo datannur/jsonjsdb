@@ -35,6 +35,18 @@ type ForeignTableObj = {
   [tableName: string]: string | number | { id: string | number } | undefined
 }
 
+export type AddRelationOptions = {
+  ifExists?: 'throw' | 'ignore'
+}
+
+export type AddRelationsResult = {
+  added: Array<string | number>
+  ignored: Array<string | number>
+}
+
+type IndexBucket = number | number[]
+type IndexRecord = Record<string | number, IndexBucket>
+
 export default class Jsonjsdb<
   TEntityTypeMap extends Record<string, DatabaseRow> = Record<
     string,
@@ -300,6 +312,111 @@ export default class Jsonjsdb<
     if (!Array.isArray(indexValue)) return 1
     return indexValue.length
   }
+  update<K extends keyof TEntityTypeMap>(
+    table: K & string,
+    id: string | number,
+    patch: Partial<TEntityTypeMap[K]>,
+  ): TEntityTypeMap[K] | undefined {
+    this.assertPatchAllowed(patch)
+
+    const row = this.get(table, id)
+    if (!row) return undefined
+
+    Object.assign(row, patch)
+    return row
+  }
+  insert<K extends keyof TEntityTypeMap>(
+    table: K & string,
+    row: TEntityTypeMap[K],
+  ): TEntityTypeMap[K] {
+    const tableData = this.getMutableTable(table)
+    if (row.id == null || row.id === '') {
+      throw new Error(`insert() table ${table} row id is required`)
+    }
+    if (this.exists(table, row.id)) {
+      throw new Error(`insert() table ${table} duplicate id: ${String(row.id)}`)
+    }
+
+    const position = tableData.length
+    tableData.push(row)
+    this.ensureTableIndex(table).id ??= {}
+    this.ensureTableIndex(table).id[row.id] = position
+
+    this.addInsertedRowIndexes(table, row, position)
+    this.computeUsage()
+    return row
+  }
+  addRelation<K extends keyof TEntityTypeMap>(
+    table: K & string,
+    id: string | number,
+    relationField: string,
+    relatedId: string | number,
+    options: AddRelationOptions = {},
+  ): boolean {
+    const ifExists = options.ifExists ?? 'throw'
+    if (!relationField.endsWith(this.idSuffix + 's')) {
+      throw new Error(`addRelation() field must end with ${this.idSuffix}s`)
+    }
+
+    const sourceRow = this.get(table, id)
+    if (!sourceRow) {
+      throw new Error(
+        `addRelation() table ${table} id not found: ${String(id)}`,
+      )
+    }
+
+    const relatedTable = this.relationFieldToTable(relationField)
+    if (!this.get(relatedTable, relatedId)) {
+      throw new Error(
+        `addRelation() table ${relatedTable} id not found: ${String(relatedId)}`,
+      )
+    }
+    if (this.hasRelation(table, id, relatedTable, relatedId)) {
+      if (ifExists === 'ignore') return false
+      throw new Error(
+        `addRelation() relation already exists: ${table}.${relationField}`,
+      )
+    }
+
+    this.appendRelation(table, id, relatedTable, relatedId)
+    this.appendRelationFieldValue(sourceRow, relationField, relatedId)
+    return true
+  }
+  addRelations<K extends keyof TEntityTypeMap>(
+    table: K & string,
+    id: string | number,
+    relationField: string,
+    relatedIds: Array<string | number>,
+    options: AddRelationOptions = {},
+  ): AddRelationsResult {
+    const ifExists = options.ifExists ?? 'throw'
+    if (!relationField.endsWith(this.idSuffix + 's')) {
+      throw new Error(`addRelations() field must end with ${this.idSuffix}s`)
+    }
+
+    const sourceRow = this.get(table, id)
+    if (!sourceRow) {
+      throw new Error(
+        `addRelations() table ${table} id not found: ${String(id)}`,
+      )
+    }
+
+    const relatedTable = this.relationFieldToTable(relationField)
+    const planned = this.planRelations(
+      table,
+      id,
+      relatedTable,
+      relatedIds,
+      ifExists,
+    )
+
+    for (const relatedId of planned.added) {
+      this.appendRelation(table, id, relatedTable, relatedId)
+    }
+    this.appendRelationFieldValues(sourceRow, relationField, planned.added)
+
+    return planned
+  }
   getParents<K extends keyof TEntityTypeMap>(
     from: K & string,
     id: string | number,
@@ -386,5 +503,278 @@ export default class Jsonjsdb<
       this.loader.db,
       this.loader.metadata.tables,
     )
+  }
+
+  private getMutableTable(table: string): DatabaseRow[] {
+    const tableData = (this.tables as Record<string, DatabaseRow[]>)[table]
+    if (!Array.isArray(tableData)) {
+      throw new Error(`table ${table} not found`)
+    }
+    return tableData
+  }
+
+  private ensureTableIndex(table: string) {
+    this.metadata.index[table] ??= {}
+    return this.metadata.index[table]
+  }
+
+  private assertPatchAllowed(patch: Record<string, unknown>): void {
+    for (const field of Object.keys(patch)) {
+      if (
+        field === 'id' ||
+        field === 'parent' + this.idSuffix ||
+        field.endsWith(this.idSuffix) ||
+        field.endsWith(this.idSuffix + 's')
+      ) {
+        throw new Error(
+          `update() cannot update indexed or relational field: ${field}`,
+        )
+      }
+    }
+  }
+
+  private addInsertedRowIndexes(
+    table: string,
+    row: DatabaseRow,
+    position: number,
+  ): void {
+    for (const [field, value] of Object.entries(row)) {
+      if (field === 'id') continue
+
+      if (field === 'parent' + this.idSuffix) {
+        if (value != null && value !== '') {
+          this.addPositionToIndex(
+            this.ensureIndex(table, field),
+            value as string | number,
+            position,
+          )
+        }
+        continue
+      }
+
+      if (field.endsWith(this.idSuffix + 's')) {
+        const relatedTable = this.relationFieldToTable(field)
+        for (const relatedId of this.parseIds(value)) {
+          this.appendRelation(
+            table,
+            row.id as string | number,
+            relatedTable,
+            relatedId,
+          )
+        }
+        continue
+      }
+
+      if (
+        field.endsWith(this.idSuffix) &&
+        this.metadata.index[table]?.[field]
+      ) {
+        if (value != null && value !== '') {
+          this.addPositionToIndex(
+            this.ensureIndex(table, field),
+            value as string | number,
+            position,
+          )
+        }
+      }
+    }
+  }
+
+  private ensureIndex(table: string, field: string): IndexRecord {
+    const tableIndex = this.ensureTableIndex(table)
+    tableIndex[field] ??= {}
+    return tableIndex[field] as IndexRecord
+  }
+
+  private addPositionToIndex(
+    index: IndexRecord,
+    key: string | number,
+    position: number,
+  ): void {
+    if (!(key in index)) {
+      index[key] = position
+      return
+    }
+
+    const bucket = index[key]
+    if (Array.isArray(bucket)) {
+      if (!bucket.includes(position)) bucket.push(position)
+      return
+    }
+
+    if (bucket !== position) index[key] = [bucket, position]
+  }
+
+  private relationFieldToTable(relationField: string): string {
+    const table = relationField.slice(0, -(this.idSuffix.length + 1))
+    if (
+      !table ||
+      !Array.isArray((this.tables as Record<string, unknown>)[table])
+    ) {
+      throw new Error(`relation table not found for field: ${relationField}`)
+    }
+    return table
+  }
+
+  private relationTableName(table: string, relatedTable: string): string {
+    return `${table}_${relatedTable}`
+  }
+
+  private appendRelation(
+    table: string,
+    id: string | number,
+    relatedTable: string,
+    relatedId: string | number,
+  ): void {
+    if (this.hasRelation(table, id, relatedTable, relatedId)) return
+
+    const relationTable = this.ensureRelationTable(table, relatedTable)
+    const sourcePosition = this.getRowPosition(table, id)
+    const relatedPosition = this.getRowPosition(relatedTable, relatedId)
+
+    relationTable.push({
+      [table + this.idSuffix]: id,
+      [relatedTable + this.idSuffix]: relatedId,
+    })
+    this.addPositionToIndex(
+      this.ensureIndex(table, relatedTable + this.idSuffix),
+      relatedId,
+      sourcePosition,
+    )
+    this.addPositionToIndex(
+      this.ensureIndex(relatedTable, table + this.idSuffix),
+      id,
+      relatedPosition,
+    )
+  }
+
+  private ensureRelationTable(
+    table: string,
+    relatedTable: string,
+  ): DatabaseRow[] {
+    const relationTableName = this.relationTableName(table, relatedTable)
+    const dbTables = this.tables as Record<string, DatabaseRow[]>
+    if (!Array.isArray(dbTables[relationTableName])) {
+      dbTables[relationTableName] = []
+      this.metadata.tables.push({ name: relationTableName })
+    }
+    return dbTables[relationTableName]
+  }
+
+  private getRowPosition(table: string, id: string | number): number {
+    const tableIndex = this.metadata.index[table]
+    const indexValue = tableIndex?.id?.[id]
+    if (typeof indexValue !== 'number') {
+      throw new Error(`table ${table}, id not found: ${String(id)}`)
+    }
+    return indexValue
+  }
+
+  private hasRelation(
+    table: string,
+    id: string | number,
+    relatedTable: string,
+    relatedId: string | number,
+  ): boolean {
+    const relationTableName = this.relationTableName(table, relatedTable)
+    const relationTable = (this.tables as Record<string, DatabaseRow[]>)[
+      relationTableName
+    ]
+    if (!Array.isArray(relationTable)) return false
+
+    const tableKey = table + this.idSuffix
+    const relatedKey = relatedTable + this.idSuffix
+    return relationTable.some(
+      row =>
+        this.sameId(row[tableKey], id) &&
+        this.sameId(row[relatedKey], relatedId),
+    )
+  }
+
+  private planRelations(
+    table: string,
+    id: string | number,
+    relatedTable: string,
+    relatedIds: Array<string | number>,
+    ifExists: 'throw' | 'ignore',
+  ): AddRelationsResult {
+    const added: Array<string | number> = []
+    const ignored: Array<string | number> = []
+
+    for (const relatedId of relatedIds) {
+      const relatedRow = this.get(relatedTable, relatedId)
+      if (!relatedRow) {
+        throw new Error(
+          `addRelations() related table ${relatedTable} id not found: ${String(relatedId)}`,
+        )
+      }
+
+      const alreadyExists =
+        this.hasRelation(table, id, relatedTable, relatedId) ||
+        added.some(addedId => this.sameId(addedId, relatedId))
+
+      if (alreadyExists) {
+        if (ifExists === 'ignore') {
+          ignored.push(relatedId)
+          continue
+        }
+
+        throw new Error(`addRelations() relation already exists`)
+      }
+
+      added.push(relatedId)
+    }
+
+    return { added, ignored }
+  }
+
+  private appendRelationFieldValue(
+    row: DatabaseRow,
+    relationField: string,
+    relatedId: string | number,
+  ): void {
+    this.appendRelationFieldValues(row, relationField, [relatedId])
+  }
+
+  private appendRelationFieldValues(
+    row: DatabaseRow,
+    relationField: string,
+    relatedIds: Array<string | number>,
+  ): void {
+    const ids = this.parseIds(row[relationField])
+    for (const relatedId of relatedIds) {
+      if (ids.some(id => this.sameId(id, relatedId))) continue
+      ids.push(relatedId)
+    }
+    row[relationField] = this.serializeIds(ids)
+  }
+
+  private sameId(left: unknown, right: unknown): boolean {
+    return String(left) === String(right)
+  }
+
+  private parseIds(value: unknown): Array<string | number> {
+    if (Array.isArray(value)) {
+      return value.filter(
+        (item): item is string | number =>
+          typeof item === 'string' || typeof item === 'number',
+      )
+    }
+
+    if (typeof value === 'number') return [value]
+    if (typeof value !== 'string') return []
+
+    return value
+      .split(',')
+      .map(id => id.trim())
+      .filter(id => id !== '')
+      .map(id => {
+        const numericId = Number(id)
+        return Number.isNaN(numericId) ? id : numericId
+      })
+  }
+
+  private serializeIds(ids: Array<string | number>): string {
+    return ids.map(id => String(id)).join(', ')
   }
 }

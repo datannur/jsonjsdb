@@ -2,3 +2,4 @@
 **/node_modules/
 **/dist/
 .pytest_cache/
+/todo/
