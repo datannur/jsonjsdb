@@ -29,6 +29,11 @@ A client-side relational database solution for static Single Page Applications. 
     - [`get()`](#gettable-id)
     - [`getAll()`](#getalltable-foreigntableobj-option)
     - [`getAllChilds()`](#getallchildstable-itemid)
+  - [Controlled Mutations](#controlled-mutations)
+    - [`insert()`](#inserttable-row)
+    - [`update()`](#updatetable-id-patch)
+    - [`addRelation()`](#addrelationtable-id-relationfield-relatedid-options)
+    - [`addRelations()`](#addrelationstable-id-relationfield-relatedids-options)
   - [Utility Methods](#utility-methods)
     - [`foreach()`](#foreachtable-callback)
     - [`exists()`](#existstable-id)
@@ -337,6 +342,95 @@ const children = db.getAllChilds('category', 1)
 - `itemId`: ID of the parent row
 
 **Returns:** Array of objects
+
+---
+
+### Controlled Mutations
+
+Jsonjsdb supports controlled in-memory mutations that preserve the current position-based index model. These methods do not persist changes back to JSON files and intentionally avoid destructive operations such as row deletion, relation deletion, ID changes, and row reordering.
+
+#### `insert(table, row)`
+
+Appends a new row to a table and updates the relevant indexes.
+
+```js
+const user = db.insert('user', {
+  id: 6,
+  name: 'New user',
+})
+```
+
+**Rules:**
+
+- The table must exist.
+- The row must have a unique `id`.
+- The row is appended at the end of the table.
+- Existing rows are never moved.
+- Primary, foreign-key, and multi-relation indexes are updated for the inserted row.
+
+**Returns:** The inserted row
+
+#### `update(table, id, patch)`
+
+Updates non-relational fields on an existing row.
+
+```js
+const user = db.update('user', 1, {
+  name: 'Updated user',
+})
+```
+
+**Rules:**
+
+- The row must exist, otherwise `undefined` is returned.
+- The patch must not include `id`, `parentId`, fields ending in `Id`, or fields ending in `Ids`.
+- The row is updated in place.
+- Indexes are not changed because indexed and relational fields are rejected.
+
+**Returns:** The updated row, or `undefined` when the row does not exist
+
+#### `addRelation(table, id, relationField, relatedId, options?)`
+
+Adds one relation to a multi-relation `*Ids` field and updates the generated relation table plus many-to-many indexes.
+
+```js
+db.addRelation('user', 1, 'tagIds', 3)
+db.addRelation('user', 1, 'tagIds', 3, { ifExists: 'ignore' })
+```
+
+This adds `3` to `user.tagIds` and updates the `user_tag` relation indexes.
+
+**Rules:**
+
+- `relationField` must end in `Ids`.
+- The source table and related table must exist.
+- The source row and related row must exist.
+- Duplicate relations are rejected by default.
+- Set `options.ifExists` to `'ignore'` to make duplicate relations a no-op.
+- Relation rows are appended; existing relation rows are never moved.
+
+**Returns:** `true` when the relation is added, or `false` when an existing relation is ignored
+
+#### `addRelations(table, id, relationField, relatedIds, options?)`
+
+Adds several relations to a multi-relation `*Ids` field and updates the generated relation table plus many-to-many indexes.
+
+```js
+const result = db.addRelations('user', 1, 'tagIds', [2, 3, 4], {
+  ifExists: 'ignore',
+})
+```
+
+**Rules:**
+
+- `relationField` must end in `Ids`.
+- The source table and related table must exist.
+- The source row and every related row must exist.
+- Duplicate relations are rejected by default before any relation is written.
+- Set `options.ifExists` to `'ignore'` to skip existing relations and duplicate IDs in the same batch.
+- Relation rows are appended; existing relation rows are never moved.
+
+**Returns:** `{ added, ignored }`, where both arrays contain the input IDs that were added or skipped
 
 ---
 

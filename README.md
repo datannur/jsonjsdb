@@ -100,6 +100,7 @@ Python library for JSONJS databases with full CRUD support and relational querie
 
 - Optimized for batch data updates rather than real-time modifications
 - Database updates require regenerating the entire dataset
+- The TypeScript core supports controlled in-memory mutations, but these changes are not persisted to source JSON files
 - Best suited for periodically updated, relatively stable data
 
 **Memory Constraints**
