@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-This is a monorepo containing two main packages:
+This is a monorepo containing three workspaces/packages:
 
 ### 1. `jsonjsdb/` - Core Library
 
@@ -11,20 +11,35 @@ This is a monorepo containing two main packages:
 - Browser and Node.js support via Vite
 - Testing with Vitest on the browser
 
-### 2. `jsonjsdb-builder/` - Builder Tools
+### 2. `jsonjsdb-builder/` - Builder Tools (DEPRECATED !!!)
 
-- Tools and utilities for building/processing JSONJS databases
-- Comparison change detection and logging
-- Excel import functionality
-- Testing with Vitest
+- Deprecated package kept in the repository for compatibility/history
+- Do not include it in default build, lint, type-check, test, verify, CI, or release work
+- Only touch or run builder-specific commands when the user explicitly asks for builder maintenance
+
+### 3. `jsonjsdb-py/` - Python Library
+
+- Python implementation for JSONJS database loading and writing
+- Source lives under `jsonjsdb-py/src/jsonjsdb/`
+- Tests live under `jsonjsdb-py/tests/`
+- Tooling uses `uv`, `pytest`, `ruff`, `pyright`, and `diff-cover`
 
 ## Development Context
 
-- **Monorepo with Workspaces**: Uses npm workspaces for dependency management and unified commands
-- **CI/CD Pipeline**: Separate GitHub Actions workflows for each package (ci-core.yml, ci-builder.yml)
-- **Path-based Triggers**: CI workflows triggered only when relevant package files change
-- **Unified Commands**: Root package.json provides commands for building/testing both packages
-- **Shared Tooling**: Common ESLint config and development standards across workspaces
+- **Monorepo with npm Workspaces**: npm workspaces manage the TypeScript packages, but default root commands now target the core package only
+- **Deprecated Builder**: `jsonjsdb-builder/` is intentionally ignored by default checks and CI/CD
+- **CI/CD Pipeline**: GitHub Actions validate/release the core TypeScript package and the Python package; builder jobs and releases are disabled
+- **Path-based Triggers**: CI jobs decide whether to run based on changed package paths
+- **Root Commands**: `npm run verify` runs formatting, lint, type-check, and tests for the core TypeScript package only
+- **Python Commands**: run Python checks from `jsonjsdb-py/` with `uv`/`make`, for example `make check`, `make test`, `make lint`, and `make typecheck`
+- **Shared Tooling**: Root ESLint/Prettier config applies to active TypeScript code and ignores deprecated builder and Python-specific files where configured
+
+## Package-Specific Commands
+
+- Core TypeScript package: run root `npm run verify` for the standard validation path
+- Core build: run `npm run build:core` from the repository root
+- Python package: run `make check` from `jsonjsdb-py/`; prefer `uv run ...` through the Makefile over calling Python tools directly
+- Deprecated builder: avoid `build:builder`, `test:builder`, `lint:builder`, and `type-check:builder` unless explicitly requested
 
 ## Code Comments Policy
 

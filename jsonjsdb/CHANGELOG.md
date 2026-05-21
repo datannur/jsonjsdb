@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.10.1 (2026-05-21)
+
+- fix: publish TypeScript declarations at the package paths declared in `package.json`
+
 ## 0.10.0 (2026-05-21)
 
 - remove: explicit alias support

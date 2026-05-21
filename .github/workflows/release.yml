@@ -28,26 +28,21 @@ jobs:
         id: versions
         run: |
           CORE_VERSION=$(node -p "require('./jsonjsdb/package.json').version")
-          BUILDER_VERSION=$(node -p "require('./jsonjsdb-builder/package.json').version")
           PYTHON_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('jsonjsdb-py/pyproject.toml', 'rb'))['project']['version'])")
 
           echo "core_version=${CORE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "builder_version=${BUILDER_VERSION}" >> "$GITHUB_OUTPUT"
           echo "python_version=${PYTHON_VERSION}" >> "$GITHUB_OUTPUT"
           echo "core_tag=jsonjsdb-v${CORE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "builder_tag=jsonjsdb-builder-v${BUILDER_VERSION}" >> "$GITHUB_OUTPUT"
           echo "python_tag=jsonjsdb-py-v${PYTHON_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Check version changes
         id: changes
         run: |
           CORE_VERSION="${{ steps.versions.outputs.core_version }}"
-          BUILDER_VERSION="${{ steps.versions.outputs.builder_version }}"
           PYTHON_VERSION="${{ steps.versions.outputs.python_version }}"
 
           # Check npm for existing versions (source of truth)
           CORE_NPM=$(npm view jsonjsdb version 2>/dev/null || echo "")
-          BUILDER_NPM=$(npm view jsonjsdb-builder version 2>/dev/null || echo "")
           PYTHON_PYPI=$(pip index versions jsonjsdb 2>/dev/null | grep -oP 'jsonjsdb \(\K[^)]+' || echo "")
 
           # Check core package
@@ -60,18 +55,6 @@ jobs:
           else
             echo "jsonjsdb version unchanged (${CORE_VERSION})"
             echo "core_changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Check builder package
-          if [[ -z "$BUILDER_NPM" ]]; then
-            echo "jsonjsdb-builder not found on npm - first release"
-            echo "builder_changed=true" >> "$GITHUB_OUTPUT"
-          elif [[ "$BUILDER_VERSION" != "$BUILDER_NPM" ]]; then
-            echo "jsonjsdb-builder version changed from ${BUILDER_NPM} to ${BUILDER_VERSION}"
-            echo "builder_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "jsonjsdb-builder version unchanged (${BUILDER_VERSION})"
-            echo "builder_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
           # Check python package
@@ -114,34 +97,6 @@ jobs:
             echo "notes=" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Extract changelog for builder
-        id: builder_changelog
-        if: steps.changes.outputs.builder_changed == 'true'
-        run: |
-          VERSION="${{ steps.versions.outputs.builder_version }}"
-          CHANGELOG_FILE="jsonjsdb-builder/CHANGELOG.md"
-
-          if [ -f "$CHANGELOG_FILE" ]; then
-            # Extract changelog section for this version
-            awk "
-            /^## ${VERSION} / { found=1; next }
-            /^## / && found { exit }
-            found { print }
-            " "$CHANGELOG_FILE" > builder_changelog_section.md
-            
-            if [ ! -s builder_changelog_section.md ]; then
-              echo "notes=" >> "$GITHUB_OUTPUT"
-            else
-              {
-                echo "notes<<EOF"
-                cat builder_changelog_section.md
-                echo "EOF"
-              } >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "notes=" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Extract changelog for python
         id: python_changelog
         if: steps.changes.outputs.python_changed == 'true'
@@ -175,12 +130,6 @@ jobs:
           cd jsonjsdb
           npm publish --access public --provenance
 
-      - name: Publish jsonjsdb-builder to npm
-        if: steps.changes.outputs.builder_changed == 'true'
-        run: |
-          cd jsonjsdb-builder
-          npm publish --access public --provenance
-
       - name: Build Python package
         if: steps.changes.outputs.python_changed == 'true'
         run: |
@@ -195,7 +144,7 @@ jobs:
           packages-dir: jsonjsdb-py/dist/
 
       - name: Create git tags and releases
-        if: steps.changes.outputs.core_changed == 'true' || steps.changes.outputs.builder_changed == 'true' || steps.changes.outputs.python_changed == 'true'
+        if: steps.changes.outputs.core_changed == 'true' || steps.changes.outputs.python_changed == 'true'
         run: |
           # Create tags and releases for changed packages
           if [[ "${{ steps.changes.outputs.core_changed }}" == "true" ]]; then
@@ -209,22 +158,6 @@ jobs:
               gh release create "${CORE_TAG}" \
                 --title "jsonjsdb ${{ steps.versions.outputs.core_version }}" \
                 --generate-notes
-            fi
-          fi
-
-          if [[ "${{ steps.changes.outputs.builder_changed }}" == "true" ]]; then
-            BUILDER_TAG="${{ steps.versions.outputs.builder_tag }}"
-            
-            if [[ "${{ steps.builder_changelog.outputs.notes }}" != "" ]]; then
-              gh release create "${BUILDER_TAG}" \
-                --title "jsonjsdb-builder ${{ steps.versions.outputs.builder_version }}" \
-                --notes "${{ steps.builder_changelog.outputs.notes }}" \
-                --latest=false
-            else
-              gh release create "${BUILDER_TAG}" \
-                --title "jsonjsdb-builder ${{ steps.versions.outputs.builder_version }}" \
-                --generate-notes \
-                --latest=false
             fi
           fi
 

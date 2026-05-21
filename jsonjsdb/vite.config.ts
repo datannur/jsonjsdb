@@ -12,7 +12,7 @@ export default defineConfig({
     },
     silent: true,
   },
-  plugins: [dts({ include: ['src'] })],
+  plugins: [dts({ entryRoot: 'src', include: ['src'] })],
   build: {
     minify: 'terser',
     sourcemap: true,
