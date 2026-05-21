@@ -244,6 +244,47 @@ describe('IntegrityChecker', () => {
       expect(result.foreignIdNotFound.post).toBeUndefined()
     })
 
+    it('should detect invalid role-qualified foreign key references', () => {
+      const db = {
+        __table__: [{ name: 'user' }, { name: 'email' }],
+        user: [
+          { id: 1, name: 'John' },
+          { id: 2, name: 'Jane' },
+        ],
+        email: [
+          { id: 1, name: 'Email 1', adminUserId: 1 },
+          { id: 2, name: 'Email 2', adminUserId: 999 },
+        ],
+      }
+
+      const result = checkWithTables(db)
+
+      expect(result.foreignIdNotFound.email).toBeDefined()
+      expect(result.foreignIdNotFound.email.adminUserId).toContain(999)
+      expect(result.foreignIdNotFound.email.adminUserId).not.toContain(1)
+    })
+
+    it('should use the longest matching table name for foreign key validation', () => {
+      const db = {
+        __table__: [
+          { name: 'dataset' },
+          { name: 'metaDataset' },
+          { name: 'variable' },
+        ],
+        dataset: [{ id: 999, name: 'dataset 999' }],
+        metaDataset: [{ id: 1, name: 'meta dataset 1' }],
+        variable: [
+          { id: 1, name: 'Variable 1', metaDatasetId: 1 },
+          { id: 2, name: 'Variable 2', metaDatasetId: 999 },
+        ],
+      }
+
+      const result = checkWithTables(db)
+
+      expect(result.foreignIdNotFound.variable.metaDatasetId).toContain(999)
+      expect(result.foreignIdNotFound.variable.metaDatasetId).not.toContain(1)
+    })
+
     it('should ignore parent_id in foreign key detection', () => {
       const db = {
         __table__: [{ name: 'category' }],

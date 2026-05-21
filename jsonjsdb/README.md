@@ -37,7 +37,7 @@ A client-side relational database solution for static Single Page Applications. 
   - [Utility Methods](#utility-methods)
     - [`foreach()`](#foreachtable-callback)
     - [`exists()`](#existstable-id)
-    - [`countRelated()`](#countrelatedtable-id-relatedtable)
+    - [`countRelated()`](#countrelatedtable-id-relatedtable-relationkey)
     - [`getParents()`](#getparentsfrom-id)
     - [`getConfig()`](#getconfigid)
     - [`getSchema()`](#getschema)
@@ -180,8 +180,8 @@ To implement relational database functionality, specific naming conventions are 
 - Underscores in table names are reserved for junction tables,
   for example: _myTable_yourTable_
 - The primary key must be a column named _id_
-- Foreign keys are columns named after the foreign table with the suffix _\_id_,
-  for example: _yourTable_id_
+- Foreign keys are columns named after the target table with the suffix _\_id_, for example: _user_id_. When several fields point to the same table, prefix the target table with a role: _admin_user_id_, _partner_user_id_.
+- Multi-relations are columns named after the target table with the suffix _\_ids_, for example: _tag_ids_. Role-qualified multi-relations use the same convention: _source_user_ids_.
 
 **Column Naming and Automatic Transformation:**
 
@@ -190,6 +190,7 @@ To implement relational database functionality, specific naming conventions are 
 - This allows compatibility with database exports, Excel files, and SQL conventions while maintaining JavaScript idiomatic naming at runtime
 - Example: A column named `user_name` in the file becomes `userName` in JavaScript objects
 - Foreign key columns like `user_id` become `userId` when accessed in code
+- Role-qualified relation columns keep the role in camelCase: `admin_user_id` becomes `adminUserId`, and `source_user_ids` becomes `sourceUserIds`
 
 ```js
 // In file: user.json.js
@@ -264,7 +265,6 @@ await db.init()
 
 - `option` (optional): Configuration options for initialization
   - `filter`: Filter options
-  - `aliases`: Table aliases
   - Other options...
 
 **Returns:** Promise<Jsonjsdb> - Returns the database instance
@@ -306,7 +306,7 @@ console.log(user) // { id: 123, name: "John", email: "john@example.com" }
 
 #### `getAll(table, foreignTableObj?, option?)`
 
-Gets all rows from a table, optionally filtered by foreign key relationships.
+Gets all rows from a table, optionally filtered by foreign key relationships. Relation filters can use a relation key (`user`, `adminUser`, `sourceUser`), a direct indexed field (`adminUserId`), or an object with an `id` property.
 
 ```js
 // Get all users
@@ -315,6 +315,16 @@ const users = db.getAll('user')
 // Get users with specific company_id
 const companyUsers = db.getAll('user', { company: 5 })
 
+// Get emails where admin_user_id references user 2
+const adminEmails = db.getAll('email', { adminUser: 2 })
+
+// Object values are accepted and resolved through their id
+const user = db.get('user', 2)
+const userEmails = db.getAll('email', { user })
+
+// Direct field filters are also supported
+const partnerEmails = db.getAll('email', { partnerUserId: 3 })
+
 // Limit results
 const limitedUsers = db.getAll('user', null, { limit: 10 })
 ```
@@ -322,7 +332,7 @@ const limitedUsers = db.getAll('user', null, { limit: 10 })
 **Parameters:**
 
 - `table`: Name of the table
-- `foreignTableObj` (optional): Filter by foreign key { table_name: id_or_object }
+- `foreignTableObj` (optional): Filter by relation key or direct relation field, using an ID or an object with an `id` property
 - `option` (optional): Options object with limit property
 
 **Returns:** Array of objects
@@ -391,14 +401,15 @@ const user = db.update('user', 1, {
 
 #### `addRelation(table, id, relationField, relatedId, options?)`
 
-Adds one relation to a multi-relation `*Ids` field and updates the generated relation table plus many-to-many indexes.
+Adds one relation to a multi-relation `*Ids` field and updates the generated relation indexes.
 
 ```js
 db.addRelation('user', 1, 'tagIds', 3)
 db.addRelation('user', 1, 'tagIds', 3, { ifExists: 'ignore' })
+db.addRelation('user', 2, 'sourceUserIds', 1)
 ```
 
-This adds `3` to `user.tagIds` and updates the `user_tag` relation indexes.
+This adds `3` to `user.tagIds` and updates the `user_tag` relation indexes. Role-qualified fields such as `sourceUserIds` update the forward index (`sourceUserId`) and reverse index (`sourceOfUserId`).
 
 **Rules:**
 
@@ -413,12 +424,14 @@ This adds `3` to `user.tagIds` and updates the `user_tag` relation indexes.
 
 #### `addRelations(table, id, relationField, relatedIds, options?)`
 
-Adds several relations to a multi-relation `*Ids` field and updates the generated relation table plus many-to-many indexes.
+Adds several relations to a multi-relation `*Ids` field and updates the generated relation indexes.
 
 ```js
 const result = db.addRelations('user', 1, 'tagIds', [2, 3, 4], {
   ifExists: 'ignore',
 })
+
+db.addRelations('user', 2, 'sourceUserIds', [1, 3])
 ```
 
 **Rules:**
@@ -470,13 +483,16 @@ if (db.exists('user', 123)) {
 
 **Returns:** boolean
 
-#### `countRelated(table, id, relatedTable)`
+#### `countRelated(table, id, relatedTable, relationKey?)`
 
 Counts how many records in a related table reference a specific ID.
 
 ```js
 // Count how many posts reference user 123
 const postCount = db.countRelated('user', 123, 'post')
+
+// Count only emails where admin_user_id references user 123
+const adminEmailCount = db.countRelated('user', 123, 'email', 'adminUser')
 console.log(`User has ${postCount} posts`)
 ```
 
@@ -484,7 +500,8 @@ console.log(`User has ${postCount} posts`)
 
 - `table`: The table containing the record to count relations for
 - `id`: ID of the record to count relations for
-- `relatedTable`: Table name where to count references (looks for foreign key table + "\_id")
+- `relatedTable`: Table name where to count references
+- `relationKey` (optional): Relation key to use when several fields reference the same table, for example `adminUser`
 
 **Returns:** number
 

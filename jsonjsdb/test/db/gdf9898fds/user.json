@@ -2,15 +2,18 @@
   {
     "id": 1,
     "name": "user 1",
-    "doc_ids": "3, 4, 5"
+    "doc_ids": "3, 4, 5",
+    "source_user_ids": null
   },
   {
     "id": 2,
-    "name": "user 2"
+    "name": "user 2",
+    "source_user_ids": "1"
   },
   {
     "id": 3,
-    "name": "user 3"
+    "name": "user 3",
+    "source_user_ids": "1, 2"
   },
   {
     "id": 4,

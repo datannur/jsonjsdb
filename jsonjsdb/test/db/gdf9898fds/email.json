@@ -3,12 +3,14 @@
     "id": "email_1",
     "name": "email 1",
     "user_id": 1,
-    "admin_id": 2
+    "admin_user_id": 2,
+    "partner_user_id": 3
   },
   {
     "id": "email_2",
     "name": "email 2",
     "user_id": 2,
-    "admin_id": 3
+    "admin_user_id": 3,
+    "partner_user_id": 4
   }
 ]

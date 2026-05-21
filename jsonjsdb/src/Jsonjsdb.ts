@@ -10,6 +10,12 @@ import type {
   DatabaseRow,
   TableCollection,
 } from './types'
+import {
+  relationFieldToKey,
+  relationFieldToReverseKey,
+  relationKeyToField,
+  resolveRelationField,
+} from './relationResolver'
 
 type InitOption = {
   filter?: {
@@ -17,7 +23,6 @@ type InitOption = {
     variable?: string
     values?: string[]
   }
-  aliases?: Array<{ table: string; alias: string }>
   useCache?: boolean
   version?: number | string
   limit?: number
@@ -64,6 +69,7 @@ export default class Jsonjsdb<
   private usageCache: Partial<Record<keyof TEntityTypeMap, boolean>> = {}
   private recursiveUsageCache: Partial<Record<keyof TEntityTypeMap, boolean>> =
     {}
+  private relationTableNames: string[] = []
 
   constructor(config?: string | PartialJsonjsdbConfig) {
     this.defaultConfig = {
@@ -134,6 +140,7 @@ export default class Jsonjsdb<
       option,
     )) as TableCollection<TEntityTypeMap>
     this.metadata = this.loader.metadata
+    this.relationTableNames = this.getRelationTableNames()
 
     this.computeUsage()
     return this
@@ -217,8 +224,8 @@ export default class Jsonjsdb<
       foreignValue = foreignValue as string | number
     }
 
-    let foreignKey = foreignTable + this.idSuffix
-    if (foreignTable === table) foreignKey = 'parent' + this.idSuffix
+    const foreignKey = this.resolveRelationIndexField(table, foreignTable)
+    if (!foreignKey) return []
 
     const indexAll = this.metadata.index[table][foreignKey]
     if (!indexAll || !(foreignValue in indexAll)) return []
@@ -242,6 +249,23 @@ export default class Jsonjsdb<
       variables.push(tableData[index])
     }
     return variables
+  }
+
+  private resolveRelationIndexField(
+    table: string,
+    relationKey: string,
+  ): string | null {
+    if (relationKey === table) return 'parent' + this.idSuffix
+
+    const tableIndex = this.metadata.index[table]
+    if (!tableIndex) return null
+
+    if (relationKey in tableIndex) return relationKey
+
+    const relationField = relationKeyToField(relationKey)
+    if (relationField in tableIndex) return relationField
+
+    return null
   }
   getAllChilds<K extends keyof TEntityTypeMap>(
     table: K & string,
@@ -303,9 +327,14 @@ export default class Jsonjsdb<
     table: K & string,
     id: string | number,
     relatedTable: string,
+    relationKey?: string,
   ): number {
     if (!(relatedTable in this.metadata.index)) return 0
-    const index = this.metadata.index[relatedTable][table + this.idSuffix]
+    const indexField = relationKey
+      ? this.resolveRelationIndexField(relatedTable, relationKey)
+      : table + this.idSuffix
+    if (!indexField) return 0
+    const index = this.metadata.index[relatedTable][indexField]
     if (!index) return 0
     if (!(id in index)) return 0
     const indexValue = index[id]
@@ -371,14 +400,14 @@ export default class Jsonjsdb<
         `addRelation() table ${relatedTable} id not found: ${String(relatedId)}`,
       )
     }
-    if (this.hasRelation(table, id, relatedTable, relatedId)) {
+    if (this.hasRelation(table, id, relatedTable, relatedId, relationField)) {
       if (ifExists === 'ignore') return false
       throw new Error(
         `addRelation() relation already exists: ${table}.${relationField}`,
       )
     }
 
-    this.appendRelation(table, id, relatedTable, relatedId)
+    this.appendRelation(table, id, relatedTable, relatedId, relationField)
     this.appendRelationFieldValue(sourceRow, relationField, relatedId)
     return true
   }
@@ -408,10 +437,11 @@ export default class Jsonjsdb<
       relatedTable,
       relatedIds,
       ifExists,
+      relationField,
     )
 
     for (const relatedId of planned.added) {
-      this.appendRelation(table, id, relatedTable, relatedId)
+      this.appendRelation(table, id, relatedTable, relatedId, relationField)
     }
     this.appendRelationFieldValues(sourceRow, relationField, planned.added)
 
@@ -553,13 +583,14 @@ export default class Jsonjsdb<
       }
 
       if (field.endsWith(this.idSuffix + 's')) {
-        const relatedTable = this.relationFieldToTable(field)
+        const relation = this.resolveRelationField(field)
         for (const relatedId of this.parseIds(value)) {
           this.appendRelation(
             table,
             row.id as string | number,
-            relatedTable,
+            relation.toTable,
             relatedId,
+            field,
           )
         }
         continue
@@ -606,14 +637,24 @@ export default class Jsonjsdb<
   }
 
   private relationFieldToTable(relationField: string): string {
-    const table = relationField.slice(0, -(this.idSuffix.length + 1))
-    if (
-      !table ||
-      !Array.isArray((this.tables as Record<string, unknown>)[table])
-    ) {
+    return this.resolveRelationField(relationField).toTable
+  }
+
+  private resolveRelationField(relationField: string) {
+    const relation = resolveRelationField(
+      relationField,
+      this.relationTableNames,
+    )
+    if (!relation) {
       throw new Error(`relation table not found for field: ${relationField}`)
     }
-    return table
+    return relation
+  }
+
+  private getRelationTableNames(): string[] {
+    return Object.entries(this.tables)
+      .filter(([, tableData]) => Array.isArray(tableData))
+      .map(([tableName]) => tableName)
   }
 
   private relationTableName(table: string, relatedTable: string): string {
@@ -625,8 +666,30 @@ export default class Jsonjsdb<
     id: string | number,
     relatedTable: string,
     relatedId: string | number,
+    relationField?: string,
   ): void {
-    if (this.hasRelation(table, id, relatedTable, relatedId)) return
+    if (this.hasRelation(table, id, relatedTable, relatedId, relationField))
+      return
+
+    const relation = relationField
+      ? this.resolveRelationField(relationField)
+      : null
+
+    if (relation?.role) {
+      const sourcePosition = this.getRowPosition(table, id)
+      const relatedPosition = this.getRowPosition(relatedTable, relatedId)
+      this.addPositionToIndex(
+        this.ensureIndex(table, relationFieldToKey(relationField!)),
+        relatedId,
+        sourcePosition,
+      )
+      this.addPositionToIndex(
+        this.ensureIndex(relatedTable, relationFieldToReverseKey(relation)),
+        id,
+        relatedPosition,
+      )
+      return
+    }
 
     const relationTable = this.ensureRelationTable(table, relatedTable)
     const sourcePosition = this.getRowPosition(table, id)
@@ -675,7 +738,19 @@ export default class Jsonjsdb<
     id: string | number,
     relatedTable: string,
     relatedId: string | number,
+    relationField?: string,
   ): boolean {
+    if (relationField) {
+      const relation = this.resolveRelationField(relationField)
+      if (relation.role) {
+        const sourceRow = this.get(table, id)
+        if (!sourceRow) return false
+        return this.parseIds(sourceRow[relationField]).some(existingId =>
+          this.sameId(existingId, relatedId),
+        )
+      }
+    }
+
     const relationTableName = this.relationTableName(table, relatedTable)
     const relationTable = (this.tables as Record<string, DatabaseRow[]>)[
       relationTableName
@@ -697,6 +772,7 @@ export default class Jsonjsdb<
     relatedTable: string,
     relatedIds: Array<string | number>,
     ifExists: 'throw' | 'ignore',
+    relationField?: string,
   ): AddRelationsResult {
     const added: Array<string | number> = []
     const ignored: Array<string | number> = []
@@ -710,7 +786,7 @@ export default class Jsonjsdb<
       }
 
       const alreadyExists =
-        this.hasRelation(table, id, relatedTable, relatedId) ||
+        this.hasRelation(table, id, relatedTable, relatedId, relationField) ||
         added.some(addedId => this.sameId(addedId, relatedId))
 
       if (alreadyExists) {

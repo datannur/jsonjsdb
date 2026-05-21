@@ -5,6 +5,11 @@ import type {
   TableInfo,
   TableRow,
 } from './types'
+import {
+  relationFieldToKey,
+  relationFieldToReverseKey,
+  resolveRelationField,
+} from './relationResolver'
 
 type LoadOption = {
   filter?: {
@@ -12,7 +17,6 @@ type LoadOption = {
     variable?: string
     values?: string[]
   }
-  aliases?: Array<{ table: string; alias: string }>
   useCache?: boolean
   version?: number | string
   shouldStandardizeIds?: boolean
@@ -46,12 +50,12 @@ export default class Loader {
   private validIdChars: string
   private validIdPattern: RegExp
   private invalidIdPattern: RegExp
+  private indexTableNames: string[] = []
 
   public db: Record<string, TableRow[]> = {}
 
   public metadata: DatabaseMetadata = {
     schema: {
-      aliases: [],
       oneToOne: [],
       oneToMany: [],
       manyToMany: [],
@@ -79,7 +83,6 @@ export default class Loader {
     if (option.filter?.values?.length && option.filter.values.length > 0) {
       this.filter(option.filter)
     }
-    this.createAlias(option.aliases)
     this.createIndex()
     return this.db
   }
@@ -337,7 +340,6 @@ export default class Loader {
     }
 
     this.metadata.schema = {
-      aliases: [],
       oneToOne: [],
       oneToMany: [],
       manyToMany: [],
@@ -487,62 +489,17 @@ export default class Loader {
     return typeof indexValue === 'number' ? indexValue : false
   }
 
-  createAlias(
-    initialAliases: Array<{ table: string; alias: string }> | null = null,
-  ) {
-    type AliasDefinition = {
-      table: string
-      alias: string
-    }
-
-    let aliases: AliasDefinition[] = []
-
-    if (initialAliases) {
-      aliases = initialAliases.map(({ table, alias }) => ({ table, alias }))
-    }
-
-    if ('config' in this.db) {
-      for (const row of this.db.config) {
-        if (typeof row.id === 'string' && row.id.startsWith('alias_')) {
-          const value = row.value
-          if (typeof value === 'string') {
-            const table = value.split(':')[0]?.trim()
-            const alias = value.split(':')[1]?.trim()
-            if (table && alias) {
-              aliases.push({ table, alias })
-            }
-          }
-        }
-      }
-    }
-
-    if ('alias' in this.db) {
-      aliases = aliases.concat(this.db.alias as typeof aliases)
-    }
-
-    for (const alias of aliases) {
-      const aliasData: Record<string, unknown>[] = []
-      if (!(alias.table in this.db)) continue
-      for (const row of this.db[alias.table]) {
-        const aliasDataRow: Record<string, unknown> = { id: row.id }
-        aliasDataRow[alias.table + this.idSuffix] = row.id
-        aliasData.push(aliasDataRow)
-      }
-      this.db[alias.alias] = aliasData as TableRow[]
-      this.metadata.tables.push({ name: alias.alias, alias: true })
-      this.metadata.schema.aliases.push(alias.alias)
-    }
-  }
-
   createIndex() {
     this.metadata.index = {}
     for (const table of this.metadata.tables) {
       if (!table.name.includes('_')) this.metadata.index[table.name] = {}
     }
+    this.indexTableNames = Object.keys(this.metadata.index)
     for (const table of this.metadata.tables) {
       if (!table.name.includes('_') && this.db[table.name][0]) {
         this.addPrimaryKey(table)
         this.processOneToMany(table)
+        this.processRoleManyToMany(table)
       }
     }
     for (const table of this.metadata.tables) {
@@ -604,10 +561,50 @@ export default class Loader {
       }
       if (
         variable.endsWith(this.idSuffix) &&
-        variable.slice(0, -this.idSuffix.length) in this.metadata.index
+        this.resolveRelationField(variable, false)
       ) {
         this.addForeignKey(variable, table)
       }
+    }
+  }
+
+  processRoleManyToMany(table: { name: string }) {
+    for (const variable in this.db[table.name][0]) {
+      const relation = this.resolveRelationField(variable, true)
+      if (!relation?.role) continue
+
+      const index: Record<string, number | number[]> = {}
+      const reverseIndex: Record<string, number | number[]> = {}
+      for (const [i, row] of Object.entries(this.db[table.name])) {
+        const rowRecord = row as Record<string, unknown>
+        const ids = this.parseIds(rowRecord[variable])
+        for (const id of ids) {
+          if (!(id in index)) {
+            index[id] = parseInt(i)
+          } else {
+            if (!Array.isArray(index[id])) {
+              index[id] = [index[id] as number]
+            }
+            ;(index[id] as number[]).push(parseInt(i))
+          }
+
+          const relatedIndex = this.idToIndex(relation.toTable, id)
+          if (relatedIndex === false || row.id == null) continue
+          const sourceId = row.id
+          if (!(sourceId in reverseIndex)) {
+            reverseIndex[sourceId] = relatedIndex
+            continue
+          }
+          if (!Array.isArray(reverseIndex[sourceId])) {
+            reverseIndex[sourceId] = [reverseIndex[sourceId] as number]
+          }
+          ;(reverseIndex[sourceId] as number[]).push(relatedIndex)
+        }
+      }
+      this.metadata.index[table.name][relationFieldToKey(variable)] = index
+      this.metadata.index[relation.toTable][
+        relationFieldToReverseKey(relation)
+      ] = reverseIndex
     }
   }
 
@@ -658,17 +655,34 @@ export default class Loader {
     }
     delete index['null']
     this.metadata.index[table.name][variable] = index
-    if (this.metadata.schema.aliases.includes(table.name)) {
-      this.metadata.schema.oneToOne.push([
-        table.name,
-        variable.slice(0, -this.idSuffix.length),
-      ])
-    } else {
-      this.metadata.schema.oneToMany.push([
-        variable.slice(0, -this.idSuffix.length),
-        table.name,
-      ])
+    const relation = this.resolveRelationField(variable, false)
+    if (!relation) return
+    const relationKey = relation.role
+      ? variable.slice(0, -this.idSuffix.length)
+      : relation.toTable
+    this.metadata.schema.oneToMany.push([relationKey, table.name])
+  }
+
+  private resolveRelationField(field: string, many: boolean) {
+    const relation = resolveRelationField(field, this.indexTableNames)
+    if (!relation || relation.many !== many) return null
+    return relation
+  }
+
+  private parseIds(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value
+        .filter(
+          (item): item is string | number =>
+            typeof item === 'string' || typeof item === 'number',
+        )
+        .map(String)
     }
+    if (typeof value !== 'string') return []
+    return value
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean)
   }
 
   addDbSchema(jsonSchemas: Record<string, unknown>[]) {
