@@ -28,7 +28,6 @@ export type Schema = {
   oneToOne: [string, string][]
   oneToMany: string[][]
   manyToMany: [string, string][]
-  aliases: string[]
 }
 
 // Database index structure types
@@ -50,7 +49,6 @@ export type DatabaseMetadata = {
 export type TableInfo = {
   name: string
   lastModif?: string | number
-  alias?: boolean
 }
 
 export type DatabaseRow = {

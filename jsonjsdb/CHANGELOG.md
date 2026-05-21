@@ -1,5 +1,12 @@
 # jsonjsdb
 
+## 0.10.0 (2026-05-21)
+
+- remove: explicit alias support
+- add: role-qualified relation queries and indexes
+- change: extend `countRelated()` with an optional relation key
+- fix: update documentation, tests, and core development dependencies
+
 ## 0.9.0 (2026-05-17)
 
 - add: controlled mutation APIs with append-only `insert()`, restricted `update()`, idempotent field-based `addRelation()`, and bulk `addRelations()`

@@ -1,1 +1,1 @@
-jsonjs.data['config'] = [['id','value'],['alias_1','user : admin'],['alias_2','user : partner']]
+jsonjs.data['config'] = [['id','value'],['app_name','jsonjsdb test fixture']]

@@ -36,6 +36,12 @@ type MutableJsonjsdb = Jsonjsdb & {
     relatedIds: Array<string | number>,
     options?: { ifExists?: 'throw' | 'ignore' },
   ) => { added: Array<string | number>; ignored: Array<string | number> }
+  countRelated: (
+    table: string,
+    id: string | number,
+    relatedTable: string,
+    relationKey?: string,
+  ) => number
 }
 
 describe('jsonjsdb', () => {
@@ -69,35 +75,6 @@ describe('jsonjsdb', () => {
       }
       const dbInit = await db.init({ filter })
       expect(dbInit).not.toBe(false)
-    })
-  })
-
-  describe('init({ aliases })', () => {
-    it('should work with aliases', async () => {
-      const dbOption = {
-        aliases: [
-          { table: 'user', alias: 'owner' },
-          { table: 'user', alias: 'manager' },
-        ],
-      }
-      const dbInit = await db.init(dbOption)
-      expect(dbInit).not.toBe(false)
-
-      // Verify that the aliases were created and can be accessed
-      const owners = db.getAll('owner')
-      const managers = db.getAll('manager')
-      const users = db.getAll('user')
-
-      expect(owners).toBeInstanceOf(Array)
-      expect(managers).toBeInstanceOf(Array)
-      expect(owners.length).toBe(users.length)
-      expect(managers.length).toBe(users.length)
-
-      // Verify that alias records have the correct structure
-      expect(owners[0]).toHaveProperty('id')
-      expect(owners[0]).toHaveProperty('userId')
-      expect(managers[0]).toHaveProperty('id')
-      expect(managers[0]).toHaveProperty('userId')
     })
   })
 
@@ -208,6 +185,90 @@ describe('jsonjsdb', () => {
         const tags = db.getAll('tag', { user: 2 })
         expect(tags.map(tag => tag.id)).toEqual([2])
       })
+
+      it('should filter by a role-qualified relation key', () => {
+        const emails = db.getAll('email', { adminUser: 2 })
+        expect(emails.map(email => email.id)).toEqual(['email_1'])
+      })
+
+      it('should filter by a direct role-qualified relation field', () => {
+        const emails = db.getAll('email', { adminUserId: 2 })
+        expect(emails.map(email => email.id)).toEqual(['email_1'])
+      })
+
+      it('should filter by a role-qualified relation object', () => {
+        const user = db.get('user', 3)
+        expect(user).toBeDefined()
+
+        const adminUser = { id: user!.id as string | number }
+        const emails = db.getAll('email', { adminUser })
+        expect(emails.map(email => email.id)).toEqual(['email_2'])
+      })
+
+      it('should keep role-qualified relation filters independent', () => {
+        const adminEmails = db.getAll('email', { adminUser: 3 })
+        const partnerEmails = db.getAll('email', { partnerUser: 3 })
+
+        expect(adminEmails.map(email => email.id)).toEqual(['email_2'])
+        expect(partnerEmails.map(email => email.id)).toEqual(['email_1'])
+      })
+
+      it('should keep exact role-less relation keys working when role-qualified relations exist', () => {
+        const emails = db.getAll('email', { user: 1 })
+        expect(emails.map(email => email.id)).toEqual(['email_1'])
+      })
+
+      it('should read role-qualified multi-relations independently', () => {
+        const users = db.getAll('user', { sourceUser: 1 })
+        expect(users.map(user => user.id)).toEqual([2, 3])
+      })
+
+      it('should read role-qualified multi-relations in the reverse direction', () => {
+        const users = db.getAll('user', { sourceOfUser: 3 })
+        expect(users.map(user => user.id)).toEqual([1, 2])
+      })
+
+      it('should use the longest matching table name for role-qualified fields', () => {
+        const dbWithOverlappingTables = new Jsonjsdb()
+        const datasetIndex = Object.fromEntries([[1, 0]])
+        const metaDatasetIndex = Object.fromEntries([[10, 0]])
+        const variableIndex = Object.fromEntries([
+          [1, 0],
+          [2, 1],
+        ])
+        const variableMetaDatasetIndex = Object.fromEntries([
+          [10, 0],
+          [999, 1],
+        ])
+
+        Object.assign(dbWithOverlappingTables, {
+          tables: {
+            dataset: [{ id: 1, name: 'dataset 1' }],
+            metaDataset: [{ id: 10, name: 'meta dataset 10' }],
+            variable: [
+              { id: 1, name: 'variable 1', metaDatasetId: 10 },
+              { id: 2, name: 'variable 2', metaDatasetId: 999 },
+            ],
+          },
+          metadata: {
+            index: {
+              dataset: { id: datasetIndex },
+              metaDataset: { id: metaDatasetIndex },
+              variable: {
+                id: variableIndex,
+                metaDatasetId: variableMetaDatasetIndex,
+              },
+            },
+            schema: { oneToOne: [], oneToMany: [], manyToMany: [] },
+            tables: [],
+          },
+        })
+
+        const variables = dbWithOverlappingTables.getAll('variable', {
+          metaDataset: 10,
+        })
+        expect(variables.map(variable => variable.id)).toEqual([1])
+      })
     })
 
     describe('foreach()', () => {
@@ -274,6 +335,22 @@ describe('jsonjsdb', () => {
       it('should count a single many-to-many row', () => {
         const tagCount = db.countRelated('user', 2, 'tag')
         expect(tagCount).toBe(1)
+      })
+
+      it('should count role-qualified one-to-many rows', () => {
+        const mutableDb = db as MutableJsonjsdb
+        expect(mutableDb.countRelated('user', 2, 'email', 'adminUser')).toBe(1)
+        expect(mutableDb.countRelated('user', 3, 'email', 'partnerUser')).toBe(
+          1,
+        )
+      })
+
+      it('should count role-qualified many-to-many rows', () => {
+        const mutableDb = db as MutableJsonjsdb
+        expect(mutableDb.countRelated('user', 1, 'user', 'sourceUser')).toBe(2)
+        expect(mutableDb.countRelated('user', 3, 'user', 'sourceOfUser')).toBe(
+          2,
+        )
       })
 
       it('should return 0 when no related records exist', () => {
@@ -395,7 +472,8 @@ describe('jsonjsdb', () => {
             id: 'email_3',
             name: 'email 3',
             userId: 1,
-            adminId: 2,
+            adminUserId: 2,
+            partnerUserId: 3,
           })
 
           expect(mutableDb.get('email', 'email_3')).toHaveProperty(
@@ -447,6 +525,19 @@ describe('jsonjsdb', () => {
           expect(
             mutableDb.getAll('doc', { user: 1 }).map(doc => doc.id),
           ).toEqual([3, 4, 5, 2])
+        })
+
+        it('should add a role-qualified multi-relation and update indexes in both directions', () => {
+          const result = mutableDb.addRelation('user', 4, 'sourceUserIds', 1)
+
+          expect(result).toBe(true)
+          expect(
+            mutableDb.getAll('user', { sourceUser: 1 }).map(user => user.id),
+          ).toEqual([2, 3, 4])
+          expect(
+            mutableDb.getAll('user', { sourceOfUser: 4 }).map(user => user.id),
+          ).toEqual([1])
+          expect(mutableDb.get('user', 4)).toHaveProperty('sourceUserIds', '1')
         })
 
         it('should reject duplicate relations without changing indexes', () => {
@@ -508,6 +599,27 @@ describe('jsonjsdb', () => {
           expect(mutableDb.countRelated('user', 1, 'tag')).toBe(4)
         })
 
+        it('should add several role-qualified relations', () => {
+          const result = mutableDb.addRelations(
+            'user',
+            4,
+            'sourceUserIds',
+            [1, 2],
+          )
+
+          expect(result).toEqual({ added: [1, 2], ignored: [] })
+          expect(
+            mutableDb.getAll('user', { sourceUser: 2 }).map(user => user.id),
+          ).toEqual([3, 4])
+          expect(
+            mutableDb.getAll('user', { sourceOfUser: 4 }).map(user => user.id),
+          ).toEqual([1, 2])
+          expect(mutableDb.get('user', 4)).toHaveProperty(
+            'sourceUserIds',
+            '1, 2',
+          )
+        })
+
         it('should ignore existing relations and duplicate batch ids when ifExists is ignore', () => {
           const result = mutableDb.addRelations(
             'user',
@@ -540,6 +652,11 @@ describe('jsonjsdb', () => {
     })
 
     describe('getConfig()', () => {
+      it('should read configuration values', () => {
+        const result = db.getConfig('app_name')
+        expect(result).toBe('jsonjsdb test fixture')
+      })
+
       it('should return undefined for nonexistent id', () => {
         const result = db.getConfig('nonexistent_id')
         expect(result).toBeUndefined()
@@ -641,12 +758,19 @@ describe('jsonjsdb', () => {
       expect(schema).toHaveProperty('oneToOne')
       expect(schema).toHaveProperty('oneToMany')
       expect(schema).toHaveProperty('manyToMany')
-      expect(schema).toHaveProperty('aliases')
 
       expect(Array.isArray(schema.oneToOne)).toBe(true)
       expect(Array.isArray(schema.oneToMany)).toBe(true)
       expect(Array.isArray(schema.manyToMany)).toBe(true)
-      expect(Array.isArray(schema.aliases)).toBe(true)
+    })
+
+    it('should expose role-qualified one-to-many relations with their query key', async () => {
+      await db.init()
+      const schema = db.getSchema()
+
+      expect(schema.oneToMany).toContainEqual(['adminUser', 'email'])
+      expect(schema.oneToMany).toContainEqual(['partnerUser', 'email'])
+      expect(schema.oneToMany).toContainEqual(['user', 'email'])
     })
 
     it('should return a deep copy that does not affect the original', async () => {
@@ -658,11 +782,9 @@ describe('jsonjsdb', () => {
       const initialOneToOneLength = schema2.oneToOne.length
 
       // Modify the first copy
-      schema1.aliases.push('test_alias')
       schema1.oneToOne.push(['test1', 'test2'])
 
       // The second copy should not be affected
-      expect(schema2.aliases).not.toContain('test_alias')
       expect(schema2.oneToOne.length).toBe(initialOneToOneLength)
     })
 
@@ -679,11 +801,9 @@ describe('jsonjsdb', () => {
       expect(schema).toHaveProperty('oneToOne')
       expect(schema).toHaveProperty('oneToMany')
       expect(schema).toHaveProperty('manyToMany')
-      expect(schema).toHaveProperty('aliases')
       expect(Array.isArray(schema.oneToOne)).toBe(true)
       expect(Array.isArray(schema.oneToMany)).toBe(true)
       expect(Array.isArray(schema.manyToMany)).toBe(true)
-      expect(Array.isArray(schema.aliases)).toBe(true)
     })
   })
 

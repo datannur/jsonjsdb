@@ -1,4 +1,5 @@
 import type { IntegrityResult, TableRow } from './types'
+import { resolveRelationField } from './relationResolver'
 
 export default class IntegrityChecker {
   private idSuffix = 'Id'
@@ -129,34 +130,33 @@ export default class IntegrityChecker {
     const tableData = db[table] as TableRow[]
     if (tableData.length === 0) return
 
-    const foreignTables: string[] = []
+    const foreignFields: Array<{ field: string; table: string }> = []
     for (const variable in tableData[0]) {
-      if (
-        variable !== 'parent' + this.idSuffix &&
-        variable.endsWith(this.idSuffix) &&
-        this.tables.includes(variable.slice(0, -this.idSuffix.length))
-      ) {
-        foreignTables.push(variable.slice(0, -this.idSuffix.length))
-      }
+      if (variable === 'parent' + this.idSuffix) continue
+      const relation = resolveRelationField(variable, this.tables)
+      if (!relation || relation.many) continue
+      foreignFields.push({ field: variable, table: relation.toTable })
     }
 
     const foreignIdNotFound: Record<string, (string | number)[]> = {}
-    for (const foreignTable of foreignTables) {
-      const foreignVar = foreignTable + this.idSuffix
+    for (const foreignField of foreignFields) {
       const foreignTableIdNotFound: (string | number)[] = []
 
       for (const row of tableData) {
-        if (row[foreignVar] === null || row[foreignVar] === '') continue
+        if (row[foreignField.field] === null || row[foreignField.field] === '')
+          continue
         if (
-          !this.tablesIds[foreignTable].includes(
-            row[foreignVar] as string | number,
+          !this.tablesIds[foreignField.table].includes(
+            row[foreignField.field] as string | number,
           )
         ) {
-          foreignTableIdNotFound.push(row[foreignVar] as string | number)
+          foreignTableIdNotFound.push(
+            row[foreignField.field] as string | number,
+          )
         }
       }
       if (foreignTableIdNotFound.length > 0) {
-        foreignIdNotFound[foreignVar] = foreignTableIdNotFound
+        foreignIdNotFound[foreignField.field] = foreignTableIdNotFound
       }
     }
     if (Object.keys(foreignIdNotFound).length > 0) {

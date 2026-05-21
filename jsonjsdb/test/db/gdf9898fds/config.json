@@ -1,10 +1,6 @@
 [
   {
-    "id": "alias_1",
-    "value": "user : admin"
-  },
-  {
-    "id": "alias_2",
-    "value": "user : partner"
+    "id": "app_name",
+    "value": "jsonjsdb test fixture"
   }
 ]
