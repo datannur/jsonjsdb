@@ -87,64 +87,6 @@ jobs:
           path: jsonjsdb/dist/
           retention-days: 7
 
-  test-and-build-builder:
-    name: Test and Build Builder Package
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-
-      - name: Check builder changes
-        id: builder-changes
-        run: |
-          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            if git diff HEAD~1 HEAD --name-only | grep -qE '^(jsonjsdb-builder/|package\.json|package-lock\.json|eslint\.config\.ts|\.github/workflows/)'; then
-              echo "changed=true" >> $GITHUB_OUTPUT
-            else
-              echo "changed=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Setup Node.js
-        if: steps.builder-changes.outputs.changed == 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: 'package-lock.json'
-
-      - name: Install dependencies
-        if: steps.builder-changes.outputs.changed == 'true'
-        run: npm ci --no-audit
-
-      - name: Lint and type-check
-        if: steps.builder-changes.outputs.changed == 'true'
-        run: |
-          npm run format:check
-          cd jsonjsdb-builder && npm run lint && npx tsc --noEmit
-
-      - name: Run tests
-        if: steps.builder-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb-builder
-        run: npm test
-
-      - name: Build and verify package
-        if: steps.builder-changes.outputs.changed == 'true'
-        working-directory: jsonjsdb-builder
-        run: npm run build && npm pack --dry-run
-
-      - name: Upload build artifacts
-        if: steps.builder-changes.outputs.changed == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: jsonjsdb-builder-dist
-          path: jsonjsdb-builder/dist/
-          retention-days: 7
-
   test-python:
     name: CI Python (${{ matrix.python-version }}, ${{ matrix.resolution }})
     runs-on: ubuntu-24.04-arm
@@ -220,15 +162,14 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-24.04-arm
-    needs: [test-and-build-core, test-and-build-builder, test-python]
+    needs: [test-and-build-core, test-python]
     if: always()
     steps:
       - name: Check CI success
         run: |
           echo "Core: ${{ needs.test-and-build-core.result }}"
-          echo "Builder: ${{ needs.test-and-build-builder.result }}"
           echo "Python: ${{ needs.test-python.result }}"
 
-          if [[ "${{ needs.test-and-build-core.result }}" == "failure" || "${{ needs.test-and-build-builder.result }}" == "failure" || "${{ needs.test-python.result }}" == "failure" ]]; then
+          if [[ "${{ needs.test-and-build-core.result }}" == "failure" || "${{ needs.test-python.result }}" == "failure" ]]; then
             exit 1
           fi

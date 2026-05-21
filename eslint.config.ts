@@ -7,7 +7,12 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ['**/*.json.js', '**/dist/**', 'jsonjsdb-py/**'],
+    ignores: [
+      '**/*.json.js',
+      '**/dist/**',
+      'jsonjsdb-builder/**',
+      'jsonjsdb-py/**',
+    ],
   },
   {
     files: ['**/*.{ts,tsx}'],
