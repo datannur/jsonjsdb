@@ -75,10 +75,8 @@ export default class Jsonjsdb<
     this.defaultConfig = {
       path: 'db',
       dbKey: false,
-      browserKey: false,
       appName: 'jsonjsdb',
       useCache: false,
-      useEncryption: false,
       validIdChars: 'a-zA-Z0-9_, -',
     }
 
@@ -91,11 +89,7 @@ export default class Jsonjsdb<
     }
 
     this.setConfig(processedConfig)
-    this.browser = new DBrowser(
-      this.config.browserKey as string,
-      this.config.appName,
-      this.config.useEncryption,
-    )
+    this.browser = new DBrowser(this.config.appName)
     this.loader = new Loader(this.browser, this.config)
     this.integrityChecker = new IntegrityChecker()
   }
@@ -111,13 +105,8 @@ export default class Jsonjsdb<
     if (dataset.path) config.path = dataset.path
     if (dataset.dbKey)
       config.dbKey = dataset.dbKey === 'false' ? false : dataset.dbKey
-    if (dataset.browserKey)
-      config.browserKey =
-        dataset.browserKey === 'false' ? false : dataset.browserKey
     if (dataset.appName) config.appName = dataset.appName
     if (dataset.useCache) config.useCache = dataset.useCache === 'true'
-    if (dataset.useEncryption)
-      config.useEncryption = dataset.useEncryption === 'true'
     if (dataset.validIdChars) config.validIdChars = dataset.validIdChars
 
     return config

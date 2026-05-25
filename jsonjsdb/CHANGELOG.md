@@ -1,5 +1,10 @@
 # jsonjsdb
 
+## 0.11.0 (2026-05-25)
+
+- change: vendor the IndexedDB storage adapter and remove the runtime dependency on `localdata`
+- remove: browser cache encryption support, including the `browserKey` and `useEncryption` configuration options and the runtime dependency on `crypto-js`
+
 ## 0.10.1 (2026-05-21)
 
 - fix: publish TypeScript declarations at the package paths declared in `package.json`

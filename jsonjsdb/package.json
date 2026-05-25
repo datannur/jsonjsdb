@@ -1,6 +1,6 @@
 {
   "name": "jsonjsdb",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Jsonjsdb database",
   "type": "module",
   "license": "MIT",
@@ -41,7 +41,6 @@
     "lint": "eslint src"
   },
   "devDependencies": {
-    "@types/crypto-js": "^4.2.2",
     "@types/escape-html": "^1.0.4",
     "@vitest/browser": "^4.1.6",
     "@vitest/browser-playwright": "^4.1.6",
@@ -53,8 +52,6 @@
     "vitest": "^4.1.6"
   },
   "dependencies": {
-    "crypto-js": "^4.2.0",
-    "escape-html": "^1.0.3",
-    "localdata": "^0.1.4"
+    "escape-html": "^1.0.3"
   }
 }
