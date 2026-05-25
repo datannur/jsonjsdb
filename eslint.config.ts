@@ -1,7 +1,7 @@
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 
-const allowedProps = ['crypto-js', '__table__']
+const allowedProps = ['__table__']
 
 export default [
   js.configs.recommended,

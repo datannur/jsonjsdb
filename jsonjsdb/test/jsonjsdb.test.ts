@@ -50,7 +50,6 @@ describe('jsonjsdb', () => {
   beforeAll(() => {
     db = new Jsonjsdb({
       dbKey: 'gdf9898fds',
-      browserKey: 'gdf9898fdsS',
       path: 'test/db',
     })
   })
@@ -366,7 +365,6 @@ describe('jsonjsdb', () => {
       beforeEach(async () => {
         mutableDb = new Jsonjsdb({
           dbKey: 'gdf9898fds',
-          browserKey: 'gdf9898fdsS',
           path: 'test/db',
         }) as MutableJsonjsdb
         await mutableDb.init()

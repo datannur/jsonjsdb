@@ -25,14 +25,5 @@ export default defineConfig({
         return 'jsonjsdb.esm.js'
       },
     },
-    rollupOptions: {
-      external: ['crypto-js', 'localdata'],
-      output: {
-        globals: {
-          'crypto-js': 'CryptoJS',
-          localdata: 'localdata',
-        },
-      },
-    },
   },
 })
