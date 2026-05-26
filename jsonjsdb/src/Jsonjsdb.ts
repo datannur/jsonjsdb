@@ -9,6 +9,7 @@ import type {
   DatabaseMetadata,
   DatabaseRow,
   TableCollection,
+  FilterBuilder,
 } from './types'
 import {
   relationFieldToKey,
@@ -18,11 +19,7 @@ import {
 } from './relationResolver'
 
 type InitOption = {
-  filter?: {
-    entity?: string
-    variable?: string
-    values?: string[]
-  }
+  filterBuilder?: FilterBuilder
   useCache?: boolean
   version?: number | string
   limit?: number

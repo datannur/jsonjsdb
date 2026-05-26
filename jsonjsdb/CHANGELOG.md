@@ -1,5 +1,11 @@
 # jsonjsdb
 
+## 0.12.0 (2026-05-26)
+
+- add: `filterBuilder` initialization option to build filters from loaded tables before indexes are created
+- remove: legacy `filter` initialization option
+- fix: filter cascade handling for numeric IDs, including `0`
+
 ## 0.11.0 (2026-05-25)
 
 - change: vendor the IndexedDB storage adapter and remove the runtime dependency on `localdata`
