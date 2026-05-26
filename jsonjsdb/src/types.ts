@@ -8,6 +8,16 @@ export type JsonjsdbConfig = {
 
 export type PartialJsonjsdbConfig = Partial<JsonjsdbConfig>
 
+export type DbFilter = {
+  entity: string
+  variable: string
+  values: unknown[]
+}
+
+export type FilterBuilder = (
+  tables: Readonly<Record<string, readonly unknown[]>>,
+) => DbFilter | DbFilter[] | null | undefined
+
 export type IntegrityResult = {
   emptyId: string[]
   duplicateId: Record<string, (string | number)[]>

@@ -2,6 +2,8 @@ import DBrowser from './DBrowser'
 import type {
   PartialJsonjsdbConfig,
   DatabaseMetadata,
+  DbFilter,
+  FilterBuilder,
   TableInfo,
   TableRow,
 } from './types'
@@ -12,11 +14,7 @@ import {
 } from './relationResolver'
 
 type LoadOption = {
-  filter?: {
-    entity?: string
-    variable?: string
-    values?: string[]
-  }
+  filterBuilder?: FilterBuilder
   useCache?: boolean
   version?: number | string
   shouldStandardizeIds?: boolean
@@ -36,6 +34,13 @@ function toSnakeCase(str: string): string {
 }
 function snakeToCamel(str: string): string {
   return str.replace(/_./g, match => match[1].toUpperCase())
+}
+
+function normalizeFilters(
+  filters: DbFilter | DbFilter[] | null | undefined,
+): DbFilter[] {
+  if (!filters) return []
+  return Array.isArray(filters) ? filters : [filters]
 }
 
 export default class Loader {
@@ -80,8 +85,9 @@ export default class Loader {
   ): Promise<Record<string, unknown>> {
     await this.loadTables(path, useCache)
     this.normalizeSchema()
-    if (option.filter?.values?.length && option.filter.values.length > 0) {
-      this.filter(option.filter)
+    const filters = normalizeFilters(option.filterBuilder?.(this.db))
+    for (const filter of filters) {
+      this.filter(filter)
     }
     this.createIndex()
     return this.db
@@ -427,7 +433,7 @@ export default class Loader {
     }
   }
 
-  filter(filter: { entity?: string; variable?: string; values?: unknown[] }) {
+  filter(filter: DbFilter) {
     if (!('entity' in filter) || !filter.entity) return false
     if (!('variable' in filter) || !filter.variable) return false
     if (!('values' in filter) || !filter.values) return false
@@ -436,14 +442,13 @@ export default class Loader {
     const idToDelete: string[] = []
     for (const item of this.db[filter.entity]) {
       if (filter.values.includes(item[filter.variable])) {
-        if (item.id) {
+        if (item.id !== undefined && item.id !== null) {
           idToDelete.push(String(item.id))
         }
       }
     }
     this.db[filter.entity] = this.db[filter.entity].filter(
-      (item: Record<string, unknown>) =>
-        !idToDelete.includes(item.id as string),
+      (item: Record<string, unknown>) => !idToDelete.includes(String(item.id)),
     )
     for (const table of this.metadata.tables) {
       if (this.db[table.name].length === 0) continue
@@ -451,15 +456,19 @@ export default class Loader {
       const idToDeleteLevel2: string[] = []
       for (const item of this.db[table.name]) {
         const foreignId = item[filter.entity + this.idSuffix]
-        if (foreignId && idToDelete.includes(String(foreignId))) {
-          if (item.id) {
+        if (
+          foreignId !== undefined &&
+          foreignId !== null &&
+          idToDelete.includes(String(foreignId))
+        ) {
+          if (item.id !== undefined && item.id !== null) {
             idToDeleteLevel2.push(String(item.id))
           }
         }
       }
       this.db[table.name] = this.db[table.name].filter(
         (item: Record<string, unknown>) =>
-          !idToDelete.includes(item[filter.entity + this.idSuffix] as string),
+          !idToDelete.includes(String(item[filter.entity + this.idSuffix])),
       )
       for (const tableLevel2 of this.metadata.tables) {
         if (this.db[tableLevel2.name].length === 0) continue
@@ -468,7 +477,7 @@ export default class Loader {
         this.db[tableLevel2.name] = this.db[tableLevel2.name].filter(
           (item: Record<string, unknown>) =>
             !idToDeleteLevel2.includes(
-              item[table.name + this.idSuffix] as string,
+              String(item[table.name + this.idSuffix]),
             ),
         )
       }

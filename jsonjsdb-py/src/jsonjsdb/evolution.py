@@ -13,6 +13,17 @@ import polars as pl
 from openpyxl import Workbook
 
 EvolutionType = Literal["add", "delete", "update"]
+EVOLUTION_PUBLIC_FIELDS = [
+    "timestamp",
+    "type",
+    "entity",
+    "entity_id",
+    "parent_entity_id",
+    "variable",
+    "old_value",
+    "new_value",
+    "name",
+]
 
 VALID_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_, -]+$")
 INVALID_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_, -]")
@@ -33,9 +44,17 @@ class EvolutionEntry:
     new_value: Any
     name: str | None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_internal: bool = False) -> dict[str, Any]:
         """Convert to dict with snake_case keys for JSON output."""
-        return asdict(self)
+        data = asdict(self)
+        if not include_internal:
+            data.pop("parent_entity", None)
+        return data
+
+    def to_public_row(self) -> list[Any]:
+        """Convert to a public evolution row for JSON.js and XLSX output."""
+        data = self.to_dict()
+        return [data[field] for field in EVOLUTION_PUBLIC_FIELDS]
 
 
 def _standardize_id(id_value: str) -> str:
@@ -364,28 +383,44 @@ def load_evolution_xlsx(xlsx_path: Path) -> list[EvolutionEntry]:
     if len(rows) < 2:
         return []
 
+    headers = [str(value) if value is not None else "" for value in rows[0]]
     entries = []
     for row in rows[1:]:  # Skip header
-        if row[0] is None:  # Skip empty rows
+        row_data = dict(zip(headers, row))
+        if row_data.get("timestamp") is None:  # Skip empty rows
             continue
 
         # Parse type with validation
-        type_val = str(row[1]) if row[1] else "update"
+        type_val = str(row_data.get("type")) if row_data.get("type") else "update"
         if type_val not in ("add", "delete", "update"):
             type_val = "update"
 
         entries.append(
             EvolutionEntry(
-                timestamp=int(str(row[0])) if row[0] else 0,
+                timestamp=int(str(row_data.get("timestamp")))
+                if row_data.get("timestamp")
+                else 0,
                 type=cast(EvolutionType, type_val),
-                entity=str(row[2]) if row[2] else "",
-                entity_id=str(row[3]) if row[3] else "",
-                parent_entity_id=str(row[4]) if row[4] else None,
-                parent_entity=str(row[5]) if row[5] else None,
-                variable=str(row[6]) if row[6] else None,
-                old_value=row[7] if row[7] else None,
-                new_value=row[8] if row[8] else None,
-                name=str(row[9]) if len(row) > 9 and row[9] else None,
+                entity=str(row_data.get("entity")) if row_data.get("entity") else "",
+                entity_id=str(row_data.get("entity_id"))
+                if row_data.get("entity_id")
+                else "",
+                parent_entity_id=str(row_data.get("parent_entity_id"))
+                if row_data.get("parent_entity_id")
+                else None,
+                parent_entity=str(row_data.get("parent_entity"))
+                if row_data.get("parent_entity")
+                else None,
+                variable=str(row_data.get("variable"))
+                if row_data.get("variable")
+                else None,
+                old_value=row_data.get("old_value")
+                if row_data.get("old_value")
+                else None,
+                new_value=row_data.get("new_value")
+                if row_data.get("new_value")
+                else None,
+                name=str(row_data.get("name")) if row_data.get("name") else None,
             )
         )
     return entries
@@ -416,33 +451,9 @@ def save_evolution(
 
     # Write evolution.json.js
     evolution_jsonjs_path = path / "evolution.json.js"
-    columns = [
-        "timestamp",
-        "type",
-        "entity",
-        "entity_id",
-        "parent_entity_id",
-        "parent_entity",
-        "variable",
-        "old_value",
-        "new_value",
-        "name",
-    ]
-    rows: list[list[Any]] = [columns]
+    rows: list[list[Any]] = [EVOLUTION_PUBLIC_FIELDS]
     for entry in entries:
-        row = [
-            entry.timestamp,
-            entry.type,
-            entry.entity,
-            entry.entity_id,
-            entry.parent_entity_id,
-            entry.parent_entity,
-            entry.variable,
-            entry.old_value,
-            entry.new_value,
-            entry.name,
-        ]
-        rows.append(row)
+        rows.append(entry.to_public_row())
 
     json_array = json.dumps(
         rows, ensure_ascii=False, separators=(",", ":"), allow_nan=False
@@ -465,19 +476,7 @@ def write_evolution_xlsx(entries: list[EvolutionEntry], xlsx_path: Path) -> None
     ws.title = "evolution"
 
     # Header row
-    headers = [
-        "timestamp",
-        "type",
-        "entity",
-        "entity_id",
-        "parent_entity_id",
-        "parent_entity",
-        "variable",
-        "old_value",
-        "new_value",
-        "name",
-    ]
-    ws.append(headers)
+    ws.append(EVOLUTION_PUBLIC_FIELDS)
 
     # Data rows
     for entry in entries:
@@ -488,7 +487,6 @@ def write_evolution_xlsx(entries: list[EvolutionEntry], xlsx_path: Path) -> None
                 entry.entity,
                 str(entry.entity_id) if entry.entity_id is not None else "",
                 str(entry.parent_entity_id) if entry.parent_entity_id else "",
-                str(entry.parent_entity) if entry.parent_entity else "",
                 str(entry.variable) if entry.variable else "",
                 str(entry.old_value) if entry.old_value is not None else "",
                 str(entry.new_value) if entry.new_value is not None else "",

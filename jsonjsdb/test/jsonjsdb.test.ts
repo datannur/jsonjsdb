@@ -65,15 +65,89 @@ describe('jsonjsdb', () => {
     })
   })
 
-  describe('init({ filter })', () => {
-    it('should work with filter', async () => {
-      const filter = {
+  describe('init({ filterBuilder })', () => {
+    it('should ignore an empty filterBuilder result', async () => {
+      const dbInit = await new Jsonjsdb({
+        dbKey: 'gdf9898fds',
+        path: 'test/db',
+      }).init({
+        filterBuilder: () => null,
+      })
+
+      expect(dbInit.getAll('user')).toHaveLength(5)
+    })
+
+    it('should apply a single filter before creating indexes', async () => {
+      const filterBuilder = vi.fn(() => ({
         entity: 'user',
         variable: 'name',
-        values: ['user 1', 'user 3'],
-      }
-      const dbInit = await db.init({ filter })
-      expect(dbInit).not.toBe(false)
+        values: ['user 1'],
+      }))
+      const dbInit = await new Jsonjsdb({
+        dbKey: 'gdf9898fds',
+        path: 'test/db',
+      }).init({
+        filterBuilder,
+      })
+
+      expect(filterBuilder).toHaveBeenCalledOnce()
+      expect(dbInit.get('user', 1)).toBeUndefined()
+      expect(dbInit.getAll('user').map(user => user.id)).toEqual([2, 3, 4, 5])
+      expect(dbInit.metadata.index.user.id[1]).toBeUndefined()
+      expect(dbInit.getAll('email', { user: 1 })).toEqual([])
+    })
+
+    it('should apply multiple filters', async () => {
+      const dbInit = await new Jsonjsdb({
+        dbKey: 'gdf9898fds',
+        path: 'test/db',
+      }).init({
+        filterBuilder: () => [
+          {
+            entity: 'user',
+            variable: 'name',
+            values: ['user 2'],
+          },
+          {
+            entity: 'tag',
+            variable: 'name',
+            values: ['tag 4'],
+          },
+        ],
+      })
+
+      expect(dbInit.getAll('user').map(user => user.id)).toEqual([1, 3, 4, 5])
+      expect(dbInit.getAll('tag').map(tag => tag.id)).toEqual([1, 2, 3, 5])
+      expect(dbInit.metadata.index.user.id[2]).toBeUndefined()
+      expect(dbInit.metadata.index.tag.id[4]).toBeUndefined()
+    })
+
+    it('should build filters from already loaded tables', async () => {
+      const dbInit = await new Jsonjsdb({
+        dbKey: 'gdf9898fds',
+        path: 'test/db',
+      }).init({
+        filterBuilder: tables => {
+          const config = tables.config.find(row => {
+            return (
+              typeof row === 'object' &&
+              row !== null &&
+              'id' in row &&
+              row.id === 'app_name'
+            )
+          })
+
+          if (!config) return undefined
+          return {
+            entity: 'user',
+            variable: 'name',
+            values: ['user 5'],
+          }
+        },
+      })
+
+      expect(dbInit.getAll('user').map(user => user.id)).toEqual([1, 2, 3, 4])
+      expect(dbInit.metadata.index.user.id[5]).toBeUndefined()
     })
   })
 

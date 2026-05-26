@@ -264,6 +264,27 @@ class TestStandardizeId:
 class TestEvolutionPersistence:
     """Tests for loading and saving evolution data."""
 
+    def test_evolution_entry_to_dict_can_include_internal_fields(self):
+        """Should include parent_entity only when internal fields are requested."""
+        entry = EvolutionEntry(
+            timestamp=1234567890,
+            type="update",
+            entity="variable",
+            entity_id="var_1",
+            parent_entity_id="ds_1",
+            parent_entity="dataset",
+            variable="name",
+            old_value="Old",
+            new_value="New",
+            name=None,
+        )
+
+        public_data = entry.to_dict()
+        internal_data = entry.to_dict(include_internal=True)
+
+        assert "parent_entity" not in public_data
+        assert internal_data["parent_entity"] == "dataset"
+
     def test_save_and_load_evolution(self):
         """Should save and load evolution entries correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -308,6 +329,64 @@ class TestEvolutionPersistence:
             assert loaded[0].type == "add"
             assert loaded[1].type == "update"
             assert loaded[1].old_value == 100
+
+    def test_save_evolution_excludes_internal_parent_entity(self):
+        """Should not export parent_entity in public JSON and JSON.js files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir)
+            entries = [
+                EvolutionEntry(
+                    timestamp=1234567890,
+                    type="update",
+                    entity="variable",
+                    entity_id="var_1",
+                    parent_entity_id="ds_1",
+                    parent_entity="dataset",
+                    variable="name",
+                    old_value="Old",
+                    new_value="New",
+                    name=None,
+                )
+            ]
+
+            save_evolution(entries, path)
+
+            with open(path / "evolution.json", encoding="utf-8") as f:
+                data = json.load(f)
+            assert data[0]["parent_entity_id"] == "ds_1"
+            assert "parent_entity" not in data[0]
+
+            jsonjs_content = (path / "evolution.json.js").read_text(encoding="utf-8")
+            assert "parent_entity_id" in jsonjs_content
+            assert "parent_entity" not in jsonjs_content.replace("parent_entity_id", "")
+
+    def test_load_evolution_accepts_legacy_parent_entity(self):
+        """Should keep reading old evolution.json files with parent_entity."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir)
+            with open(path / "evolution.json", "w", encoding="utf-8") as f:
+                json.dump(
+                    [
+                        {
+                            "timestamp": 1234567890,
+                            "type": "delete",
+                            "entity": "variable",
+                            "entity_id": "var_1",
+                            "parent_entity_id": "ds_1",
+                            "parent_entity": "dataset",
+                            "variable": None,
+                            "old_value": None,
+                            "new_value": None,
+                            "name": None,
+                        }
+                    ],
+                    f,
+                )
+
+            loaded = load_evolution(path)
+
+            assert loaded[0].parent_entity_id == "ds_1"
+            assert loaded[0].parent_entity == "dataset"
 
     def test_load_nonexistent_returns_empty(self):
         """Should return empty list when no evolution file exists."""
@@ -494,7 +573,6 @@ class TestEvolutionXlsx:
                 "entity",
                 "entity_id",
                 "parent_entity_id",
-                "parent_entity",
                 "variable",
                 "old_value",
                 "new_value",
@@ -508,11 +586,10 @@ class TestEvolutionXlsx:
             assert row[2] == "user"
             assert row[3] == "1"
             assert row[4] == "10"
-            assert row[5] == "company"
-            assert row[6] == "score"
-            assert row[7] == "100"
-            assert row[8] == "200"
-            assert row[9] == "Alice"
+            assert row[5] == "score"
+            assert row[6] == "100"
+            assert row[7] == "200"
+            assert row[8] == "Alice"
 
     def test_save_evolution_empty_entries_does_nothing(self):
         """Should not create any files when entries list is empty."""
@@ -569,6 +646,51 @@ class TestEvolutionXlsx:
             assert len(loaded) == 1
             assert loaded[0].type == "add"
             assert loaded[0].entity == "user"
+
+    def test_load_evolution_from_legacy_xlsx_with_parent_entity(self):
+        """Should read old xlsx files that include parent_entity."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xlsx_path = Path(tmpdir) / "legacy.xlsx"
+
+            from openpyxl import Workbook
+
+            wb = Workbook()
+            ws = wb.active
+            assert ws is not None
+            ws.append(
+                [
+                    "timestamp",
+                    "type",
+                    "entity",
+                    "entity_id",
+                    "parent_entity_id",
+                    "parent_entity",
+                    "variable",
+                    "old_value",
+                    "new_value",
+                    "name",
+                ]
+            )
+            ws.append(
+                [
+                    1234567890,
+                    "delete",
+                    "variable",
+                    "var_1",
+                    "ds_1",
+                    "dataset",
+                    None,
+                    None,
+                    None,
+                    None,
+                ]
+            )
+            wb.save(xlsx_path)
+
+            loaded = load_evolution_xlsx(xlsx_path)
+
+            assert loaded[0].parent_entity_id == "ds_1"
+            assert loaded[0].parent_entity == "dataset"
 
     def test_load_evolution_falls_back_to_json(self):
         """Should fall back to json when xlsx not provided."""

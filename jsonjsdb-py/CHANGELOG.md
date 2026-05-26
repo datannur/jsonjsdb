@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.8
+
+fix: Stop exporting internal `parent_entity` in evolution JSON, JSON.js, and XLSX outputs
+
 ## 0.8.7
 
 fix: Preserve typed nullable integer values as JSON integers in `.json` and `.json.js` exports

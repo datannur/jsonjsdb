@@ -402,6 +402,42 @@ describe('Loader', () => {
     })
   })
 
+  describe('filter()', () => {
+    it('should remove rows and related rows with id 0', () => {
+      loader.db = {
+        user: [
+          { id: 0, name: 'inactive' },
+          { id: 1, name: 'active' },
+        ],
+        email: [
+          { id: 0, userId: 0, name: 'removed email' },
+          { id: 1, userId: 1, name: 'kept email' },
+        ],
+        note: [
+          { id: 0, emailId: 0, name: 'removed note' },
+          { id: 1, emailId: 1, name: 'kept note' },
+        ],
+      }
+      loader.metadata.tables = [
+        { name: 'user' },
+        { name: 'email' },
+        { name: 'note' },
+      ]
+
+      loader.filter({
+        entity: 'user',
+        variable: 'name',
+        values: ['inactive'],
+      })
+
+      expect(loader.db.user).toEqual([{ id: 1, name: 'active' }])
+      expect(loader.db.email).toEqual([
+        { id: 1, userId: 1, name: 'kept email' },
+      ])
+      expect(loader.db.note).toEqual([{ id: 1, emailId: 1, name: 'kept note' }])
+    })
+  })
+
   describe('Cache versioning with ?v= parameter', () => {
     it('should append ?v=version to loadViaFetch URLs', async () => {
       const version = 987654321

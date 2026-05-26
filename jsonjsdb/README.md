@@ -261,10 +261,30 @@ console.log('Database initialized:', result === db) // true
 await db.init()
 ```
 
+Filters can be built from the loaded tables before indexes are created:
+
+```js
+await db.init({
+  filterBuilder: tables => {
+    const hiddenUsers = tables.config?.some(
+      row => row.id === 'hide-inactive-users' && row.value === true,
+    )
+
+    if (!hiddenUsers) return null
+
+    return {
+      entity: 'user',
+      variable: 'status',
+      values: ['inactive'],
+    }
+  },
+})
+```
+
 **Parameters:**
 
 - `option` (optional): Configuration options for initialization
-  - `filter`: Filter options
+  - `filterBuilder`: Function called after tables are loaded and schema relations are normalized, before indexes are created. It can return one filter, an array of filters, `null`, or `undefined`.
   - Other options...
 
 **Returns:** Promise<Jsonjsdb> - Returns the database instance
