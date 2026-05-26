@@ -264,6 +264,27 @@ class TestStandardizeId:
 class TestEvolutionPersistence:
     """Tests for loading and saving evolution data."""
 
+    def test_evolution_entry_to_dict_can_include_internal_fields(self):
+        """Should include parent_entity only when internal fields are requested."""
+        entry = EvolutionEntry(
+            timestamp=1234567890,
+            type="update",
+            entity="variable",
+            entity_id="var_1",
+            parent_entity_id="ds_1",
+            parent_entity="dataset",
+            variable="name",
+            old_value="Old",
+            new_value="New",
+            name=None,
+        )
+
+        public_data = entry.to_dict()
+        internal_data = entry.to_dict(include_internal=True)
+
+        assert "parent_entity" not in public_data
+        assert internal_data["parent_entity"] == "dataset"
+
     def test_save_and_load_evolution(self):
         """Should save and load evolution entries correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
