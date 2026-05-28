@@ -15,121 +15,129 @@ export type LocalData = {
 const dbName = 'ldb'
 const dbVersion = 1
 const storeName = 's'
-const readyRetryDelayMs = 50
 
-let db: IDBDatabase | null = null
-let unavailable = false
+function createOpenDatabase(
+  indexedDB: IDBFactory | undefined,
+): () => Promise<IDBDatabase | null> {
+  let openDatabasePromise: Promise<IDBDatabase | null> | null = null
 
-function openDatabase(): void {
-  const indexedDB = globalThis.indexedDB
-  if (!indexedDB) {
-    unavailable = true
-    console.error('indexDB not supported')
-    return
-  }
+  return function openDatabase(): Promise<IDBDatabase | null> {
+    if (openDatabasePromise) return openDatabasePromise
 
-  const request = indexedDB.open(dbName, dbVersion)
+    openDatabasePromise = new Promise(resolve => {
+      if (!indexedDB) {
+        console.error('indexDB not supported')
+        resolve(null)
+        return
+      }
 
-  request.onsuccess = function () {
-    db = this.result
-  }
+      const request = indexedDB.open(dbName, dbVersion)
 
-  request.onerror = event => {
-    unavailable = true
-    console.error('indexedDB request error')
-    console.log(event)
-  }
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
 
-  request.onupgradeneeded = event => {
-    db = null
-    const database = (event.target as IDBOpenDBRequest).result
-    const store = database.createObjectStore(storeName, { keyPath: 'k' })
+      request.onerror = event => {
+        console.error('indexedDB request error')
+        console.log(event)
+        resolve(null)
+      }
 
-    store.transaction.oncomplete = completeEvent => {
-      db = (completeEvent.target as IDBTransaction).db
-    }
+      request.onupgradeneeded = event => {
+        const database = (event.target as IDBOpenDBRequest).result
+        const store = database.createObjectStore(storeName, { keyPath: 'k' })
+
+        store.transaction.oncomplete = completeEvent => {
+          resolve((completeEvent.target as IDBTransaction).db)
+        }
+      }
+    })
+
+    return openDatabasePromise
   }
 }
 
-function whenReady(action: () => void): void {
-  if (db) {
-    action()
-    return
+export function createLocalData(indexedDB = globalThis.indexedDB): LocalData {
+  const openDatabase = createOpenDatabase(indexedDB)
+  void openDatabase()
+
+  function whenReady(action: (db: IDBDatabase) => void): void {
+    void openDatabase().then(db => {
+      if (db) action(db)
+    })
   }
 
-  if (unavailable) return
+  function readonlyStore(db: IDBDatabase): IDBObjectStore {
+    return db.transaction(storeName).objectStore(storeName)
+  }
 
-  setTimeout(() => whenReady(action), readyRetryDelayMs)
+  function readwriteStore(db: IDBDatabase): IDBObjectStore {
+    return db.transaction(storeName, 'readwrite').objectStore(storeName)
+  }
+
+  return {
+    get(key, callback) {
+      whenReady(db => {
+        readonlyStore(db).get(key).onsuccess = event => {
+          const result = (
+            event.target as IDBRequest<LocalDataEntry | undefined>
+          ).result
+          callback(result?.v ?? null)
+        }
+      })
+    },
+
+    set(key, value, callback) {
+      whenReady(db => {
+        const transaction = db.transaction(storeName, 'readwrite')
+        transaction.oncomplete = () => {
+          if (callback) callback()
+        }
+        transaction.objectStore(storeName).put({ k: key, v: value })
+        transaction.commit()
+      })
+    },
+
+    delete(key, callback) {
+      whenReady(db => {
+        readwriteStore(db).delete(key).onsuccess = () => {
+          if (callback) callback()
+        }
+      })
+    },
+
+    list(callback) {
+      whenReady(db => {
+        readonlyStore(db).getAllKeys().onsuccess = event => {
+          callback(
+            (event.target as IDBRequest<IDBValidKey[] | null>).result ?? null,
+          )
+        }
+      })
+    },
+
+    getAll(callback) {
+      whenReady(db => {
+        readonlyStore(db).getAll().onsuccess = event => {
+          callback(
+            (event.target as IDBRequest<LocalDataEntry[] | null>).result ??
+              null,
+          )
+        }
+      })
+    },
+
+    clear(callback) {
+      whenReady(db => {
+        readwriteStore(db).clear().onsuccess = () => {
+          if (callback) callback()
+        }
+      })
+    },
+  }
 }
 
-function readonlyStore(): IDBObjectStore {
-  return db!.transaction(storeName).objectStore(storeName)
-}
-
-function readwriteStore(): IDBObjectStore {
-  return db!.transaction(storeName, 'readwrite').objectStore(storeName)
-}
-
-openDatabase()
-
-const localData: LocalData = {
-  get(key, callback) {
-    whenReady(() => {
-      readonlyStore().get(key).onsuccess = event => {
-        const result = (event.target as IDBRequest<LocalDataEntry | undefined>)
-          .result
-        callback(result?.v ?? null)
-      }
-    })
-  },
-
-  set(key, value, callback) {
-    whenReady(() => {
-      const transaction = db!.transaction(storeName, 'readwrite')
-      transaction.oncomplete = () => {
-        if (callback) callback()
-      }
-      transaction.objectStore(storeName).put({ k: key, v: value })
-      transaction.commit()
-    })
-  },
-
-  delete(key, callback) {
-    whenReady(() => {
-      readwriteStore().delete(key).onsuccess = () => {
-        if (callback) callback()
-      }
-    })
-  },
-
-  list(callback) {
-    whenReady(() => {
-      readonlyStore().getAllKeys().onsuccess = event => {
-        callback(
-          (event.target as IDBRequest<IDBValidKey[] | null>).result ?? null,
-        )
-      }
-    })
-  },
-
-  getAll(callback) {
-    whenReady(() => {
-      readonlyStore().getAll().onsuccess = event => {
-        callback(
-          (event.target as IDBRequest<LocalDataEntry[] | null>).result ?? null,
-        )
-      }
-    })
-  },
-
-  clear(callback) {
-    whenReady(() => {
-      readwriteStore().clear().onsuccess = () => {
-        if (callback) callback()
-      }
-    })
-  },
-}
+const localData = createLocalData()
 
 if (typeof window !== 'undefined') {
   ;(window as Window & { ldb?: LocalData }).ldb = localData
