@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.12.1 (2026-05-28)
+
+- fix: remove fixed polling delay from IndexedDB readiness for first browser storage operations
+
 ## 0.12.0 (2026-05-26)
 
 - add: `filterBuilder` initialization option to build filters from loaded tables before indexes are created
