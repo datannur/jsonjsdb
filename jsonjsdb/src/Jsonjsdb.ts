@@ -433,6 +433,53 @@ export default class Jsonjsdb<
 
     return planned
   }
+  addForeignKey<K extends keyof TEntityTypeMap>(
+    table: K & string,
+    id: string | number,
+    relationField: string,
+    relatedId: string | number,
+  ): boolean {
+    if (
+      !relationField.endsWith(this.idSuffix) ||
+      relationField.endsWith(this.idSuffix + 's')
+    ) {
+      throw new Error(`addForeignKey() field must end with ${this.idSuffix}`)
+    }
+
+    const sourceRow = this.get(table, id)
+    if (!sourceRow) {
+      throw new Error(
+        `addForeignKey() table ${table} id not found: ${String(id)}`,
+      )
+    }
+
+    const relation = this.resolveRelationField(relationField)
+    if (relation.many) {
+      throw new Error(`addForeignKey() field must end with ${this.idSuffix}`)
+    }
+
+    const mutableSourceRow = sourceRow as DatabaseRow
+    const currentValue = mutableSourceRow[relationField]
+    if (currentValue != null && currentValue !== '') {
+      throw new Error(
+        `addForeignKey() foreign key already exists: ${table}.${relationField}`,
+      )
+    }
+
+    if (!this.get(relation.toTable, relatedId)) {
+      throw new Error(
+        `addForeignKey() table ${relation.toTable} id not found: ${String(relatedId)}`,
+      )
+    }
+
+    mutableSourceRow[relationField] = relatedId
+    this.addPositionToIndex(
+      this.ensureIndex(table, relationField),
+      relatedId,
+      this.getRowPosition(table, id),
+    )
+    return true
+  }
   getParents<K extends keyof TEntityTypeMap>(
     from: K & string,
     id: string | number,

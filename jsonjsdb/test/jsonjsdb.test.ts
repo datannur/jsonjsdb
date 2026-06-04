@@ -36,6 +36,12 @@ type MutableJsonjsdb = Jsonjsdb & {
     relatedIds: Array<string | number>,
     options?: { ifExists?: 'throw' | 'ignore' },
   ) => { added: Array<string | number>; ignored: Array<string | number> }
+  addForeignKey: (
+    table: string,
+    id: string | number,
+    relationField: string,
+    relatedId: string | number,
+  ) => boolean
   countRelated: (
     table: string,
     id: string | number,
@@ -446,6 +452,7 @@ describe('jsonjsdb', () => {
         expect(typeof mutableDb.insert).toBe('function')
         expect(typeof mutableDb.addRelation).toBe('function')
         expect(typeof mutableDb.addRelations).toBe('function')
+        expect(typeof mutableDb.addForeignKey).toBe('function')
       })
 
       describe('update()', () => {
@@ -719,6 +726,109 @@ describe('jsonjsdb', () => {
             mutableDb.getAll('tag', { user: 1 }).map(tag => tag.id),
           ).toEqual([1, 2])
           expect(mutableDb.countRelated('user', 1, 'tag')).toBe(2)
+        })
+      })
+
+      describe('addForeignKey()', () => {
+        it('should add a missing foreign key and update relation-key queries', () => {
+          mutableDb.insert('email', {
+            id: 'email_3',
+            name: 'email 3',
+          })
+
+          const result = mutableDb.addForeignKey(
+            'email',
+            'email_3',
+            'userId',
+            1,
+          )
+
+          expect(result).toBe(true)
+          expect(mutableDb.get('email', 'email_3')).toHaveProperty('userId', 1)
+          expect(
+            mutableDb.getAll('email', { user: 1 }).map(email => email.id),
+          ).toEqual(['email_1', 'email_3'])
+        })
+
+        it('should add a missing foreign key and update direct field queries', () => {
+          mutableDb.insert('email', {
+            id: 'email_3',
+            name: 'email 3',
+          })
+
+          mutableDb.addForeignKey('email', 'email_3', 'userId', 1)
+
+          expect(
+            mutableDb.getAll('email', { userId: 1 }).map(email => email.id),
+          ).toEqual(['email_1', 'email_3'])
+        })
+
+        it('should reject replacing an existing foreign key', () => {
+          expect(() =>
+            mutableDb.addForeignKey('email', 'email_1', 'userId', 2),
+          ).toThrow()
+
+          expect(mutableDb.get('email', 'email_1')).toHaveProperty('userId', 1)
+          expect(
+            mutableDb.getAll('email', { user: 1 }).map(email => email.id),
+          ).toEqual(['email_1'])
+          expect(
+            mutableDb.getAll('email', { user: 2 }).map(email => email.id),
+          ).toEqual(['email_2'])
+        })
+
+        it('should keep shared foreign-key index buckets correct', () => {
+          mutableDb.insert('email', {
+            id: 'email_3',
+            name: 'email 3',
+          })
+          mutableDb.insert('email', {
+            id: 'email_4',
+            name: 'email 4',
+          })
+
+          mutableDb.addForeignKey('email', 'email_3', 'userId', 1)
+          mutableDb.addForeignKey('email', 'email_4', 'userId', 1)
+
+          expect(
+            mutableDb.getAll('email', { user: 1 }).map(email => email.id),
+          ).toEqual(['email_1', 'email_3', 'email_4'])
+        })
+
+        it('should keep role-qualified foreign keys in separate indexes', () => {
+          mutableDb.insert('email', {
+            id: 'email_3',
+            name: 'email 3',
+          })
+
+          mutableDb.addForeignKey('email', 'email_3', 'adminUserId', 2)
+          mutableDb.addForeignKey('email', 'email_3', 'partnerUserId', 2)
+
+          expect(
+            mutableDb.getAll('email', { adminUser: 2 }).map(email => email.id),
+          ).toEqual(['email_1', 'email_3'])
+          expect(
+            mutableDb
+              .getAll('email', { partnerUser: 2 })
+              .map(email => email.id),
+          ).toEqual(['email_3'])
+        })
+
+        it('should reject invalid fields and missing related rows', () => {
+          mutableDb.insert('email', {
+            id: 'email_3',
+            name: 'email 3',
+          })
+
+          expect(() =>
+            mutableDb.addForeignKey('email', 'email_3', 'userIds', 1),
+          ).toThrow()
+          expect(() =>
+            mutableDb.addForeignKey('email', 'email_3', 'name', 1),
+          ).toThrow()
+          expect(() =>
+            mutableDb.addForeignKey('email', 'email_3', 'userId', 999),
+          ).toThrow()
         })
       })
     })

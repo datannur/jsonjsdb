@@ -32,6 +32,7 @@ A client-side relational database solution for static Single Page Applications. 
   - [Controlled Mutations](#controlled-mutations)
     - [`insert()`](#inserttable-row)
     - [`update()`](#updatetable-id-patch)
+    - [`addForeignKey()`](#addforeignkeytable-id-relationfield-relatedid)
     - [`addRelation()`](#addrelationtable-id-relationfield-relatedid-options)
     - [`addRelations()`](#addrelationstable-id-relationfield-relatedids-options)
   - [Utility Methods](#utility-methods)
@@ -418,6 +419,28 @@ const user = db.update('user', 1, {
 - Indexes are not changed because indexed and relational fields are rejected.
 
 **Returns:** The updated row, or `undefined` when the row does not exist
+
+#### `addForeignKey(table, id, relationField, relatedId)`
+
+Adds a missing single foreign key to a `*Id` field and updates the generated index for that exact field.
+
+```js
+db.addForeignKey('email', 'email_3', 'userId', 1)
+db.addForeignKey('email', 'email_3', 'adminUserId', 2)
+```
+
+This sets `email.userId` or `email.adminUserId` only when the field is currently empty, then updates relation queries such as `db.getAll('email', { user: 1 })`, `db.getAll('email', { userId: 1 })`, and `db.getAll('email', { adminUser: 2 })`.
+
+**Rules:**
+
+- `relationField` must end in `Id`, not `Ids`.
+- The source table and related table must exist.
+- The source row and related row must exist.
+- The foreign-key field must currently be `null`, `undefined`, or an empty string.
+- Existing foreign keys are rejected instead of replaced.
+- Role-qualified fields such as `adminUserId` and `partnerUserId` keep separate indexes.
+
+**Returns:** `true` when the foreign key is added
 
 #### `addRelation(table, id, relationField, relatedId, options?)`
 

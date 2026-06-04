@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.12.2 (2026-06-04)
+
+- add: addForeignKey() method to add foreign key indexes to existing objects
+
 ## 0.12.1 (2026-05-28)
 
 - fix: remove fixed polling delay from IndexedDB readiness for first browser storage operations
