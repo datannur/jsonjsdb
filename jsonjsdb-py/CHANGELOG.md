@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.9
+
+fix: Avoid rewriting unchanged exports from `save()` and writer calls while preserving `__table__.last_modif` for unchanged tables
+
 ## 0.8.8
 
 fix: Stop exporting internal `parent_entity` in evolution JSON, JSON.js, and XLSX outputs

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, get_args, get_type_hints
 
@@ -18,7 +19,12 @@ from .evolution import (
 from .loader import load_table, load_table_index
 from .table import Table
 from .types import TableRow
-from .writer import write_table_index, write_table_json, write_table_jsonjs
+from .writer import (
+    load_json_hashes,
+    save_json_hashes,
+    table_index_df,
+    write_table_json_pair,
+)
 
 # Internal tables that should not be loaded as user data
 INTERNAL_TABLES = {"evolution", "__table__"}
@@ -144,6 +150,10 @@ class Jsonjsdb:
 
         ts = timestamp if timestamp is not None else get_timestamp()
         new_entries: list[EvolutionEntry] = []
+        old_hashes = load_json_hashes(save_path)
+        old_last_modifs = _load_last_modifs(save_path / "__table__.json")
+        new_hashes: dict[str, str] = {}
+        last_modifs: dict[str, int] = {}
 
         table_names = []
         for name, table in self._tables.items():
@@ -151,17 +161,33 @@ class Jsonjsdb:
             if persistable_df.is_empty():
                 continue
 
-            # Track evolution if enabled
-            if track_evolution:
+            json_rel_path = f"{name}.json"
+
+            def track_table_evolution(data_changed: bool) -> None:
+                if not track_evolution or not data_changed:
+                    return
+
                 old_df = self._get_old_table(save_path, name, same_path)
                 entries = compare_datasets(
                     old_df, persistable_df, ts, name, parent_relations
                 )
                 new_entries.extend(entries)
 
-            write_table_json(persistable_df, save_path / f"{name}.json")
-            if write_js:
-                write_table_jsonjs(persistable_df, name, save_path / f"{name}.json.js")
+            write_result = write_table_json_pair(
+                persistable_df,
+                name,
+                save_path,
+                write_js=write_js,
+                export_root=save_path,
+                previous_hashes=old_hashes,
+                update_hash_metadata=False,
+                before_write=track_table_evolution,
+            )
+
+            new_hashes[json_rel_path] = write_result.json_hash
+            last_modifs[name] = (
+                ts if write_result.data_changed else old_last_modifs.get(name, ts)
+            )
             table_names.append(name)
 
             # Update snapshot for next comparison
@@ -179,10 +205,28 @@ class Jsonjsdb:
             save_evolution(all_entries, save_path, xlsx_path)
             if "evolution" not in table_names:  # pragma: no branch
                 table_names.append("evolution")
+            last_modifs["evolution"] = ts
+        elif (save_path / "evolution.json").exists():
+            table_names.append("evolution")
+            last_modifs["evolution"] = old_last_modifs.get("evolution", ts)
 
-        write_table_index(
-            table_names, save_path / "__table__.json", ts, write_js=write_js
+        last_modifs["__table__"] = (
+            ts
+            if _last_modifs_changed(last_modifs, old_last_modifs)
+            else old_last_modifs.get("__table__", ts)
         )
+        table_index = table_index_df(table_names, ts, last_modifs=last_modifs)
+        table_index_result = write_table_json_pair(
+            table_index,
+            "__table__",
+            save_path,
+            write_js=write_js,
+            export_root=save_path,
+            previous_hashes=old_hashes,
+            update_hash_metadata=False,
+        )
+        new_hashes["__table__.json"] = table_index_result.json_hash
+        save_json_hashes(save_path, _merge_json_hashes(old_hashes, new_hashes))
 
         self._path = save_path
 
@@ -199,3 +243,45 @@ class Jsonjsdb:
         if not json_path.exists():
             return pl.DataFrame()
         return load_table(json_path)
+
+
+def _merge_json_hashes(
+    old_hashes: dict[str, str], new_hashes: dict[str, str]
+) -> dict[str, str]:
+    managed_hashes = {
+        key: value
+        for key, value in old_hashes.items()
+        if key.startswith("_") or not key.endswith(".json")
+    }
+    managed_hashes.update(new_hashes)
+    return managed_hashes
+
+
+def _load_last_modifs(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+
+    try:
+        entries = load_table_index(path)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    result: dict[str, int] = {}
+    for entry in entries:
+        name = entry.get("name")
+        last_modif = entry.get("last_modif")
+        if isinstance(name, str) and isinstance(last_modif, int):
+            result[name] = last_modif
+    return result
+
+
+def _last_modifs_changed(
+    new_values: dict[str, int], old_values: dict[str, int]
+) -> bool:
+    public_new_values = {
+        key: value for key, value in new_values.items() if key != "__table__"
+    }
+    public_old_values = {
+        key: value for key, value in old_values.items() if key != "__table__"
+    }
+    return public_new_values != public_old_values

@@ -359,6 +359,166 @@ def test_save_with_write_js_false(tmp_path: Path):
     assert not (new_path / "user.json.js").exists()
 
 
+def test_save_without_changes_preserves_files_and_last_modif(tmp_path: Path):
+    """Should not rewrite unchanged exports on no-op save."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+
+    tracked_paths = [
+        tmp_path / "user.json",
+        tmp_path / "user.json.js",
+        tmp_path / "__table__.json",
+        tmp_path / "__table__.json.js",
+    ]
+    mtimes_before = {path: path.stat().st_mtime_ns for path in tracked_paths}
+    table_index_before = json.loads((tmp_path / "__table__.json").read_text())
+
+    db.save(tmp_path, timestamp=222)
+
+    mtimes_after = {path: path.stat().st_mtime_ns for path in tracked_paths}
+    table_index_after = json.loads((tmp_path / "__table__.json").read_text())
+
+    assert mtimes_after == mtimes_before
+    assert table_index_after == table_index_before
+
+
+def test_save_without_changes_skips_evolution_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Should avoid expensive evolution comparisons for unchanged tables."""
+    import jsonjsdb.database as database_module
+
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+
+    calls = 0
+
+    def fail_on_compare(*args: object, **kwargs: object) -> list[object]:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("compare_datasets should not run for unchanged tables")
+
+    monkeypatch.setattr(database_module, "compare_datasets", fail_on_compare)
+
+    db.save(tmp_path, timestamp=222)
+
+    assert calls == 0
+
+
+def test_save_regenerates_missing_jsonjs_for_unchanged_table(tmp_path: Path):
+    """Should rewrite derived JSON.js when canonical JSON is unchanged but JS is missing."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    user_json_mtime = (tmp_path / "user.json").stat().st_mtime_ns
+
+    (tmp_path / "user.json.js").unlink()
+
+    db.save(tmp_path, timestamp=222)
+
+    assert (tmp_path / "user.json").stat().st_mtime_ns == user_json_mtime
+    assert (tmp_path / "user.json.js").exists()
+
+
+def test_save_without_hash_state_uses_existing_json_hash(tmp_path: Path):
+    """Should avoid data changes when upgrading a database without hash metadata."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    (tmp_path / "_meta" / "json-hashes.json").unlink()
+    user_json_mtime = (tmp_path / "user.json").stat().st_mtime_ns
+
+    db.save(tmp_path, timestamp=222)
+
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    assert (tmp_path / "user.json").stat().st_mtime_ns == user_json_mtime
+    assert table_index["user"] == 111
+
+
+def test_save_with_invalid_hash_state_uses_existing_json_hash(tmp_path: Path):
+    """Should recover when hash metadata exists but cannot be decoded."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    (tmp_path / "_meta" / "json-hashes.json").write_text("{", encoding="utf-8")
+    user_json_mtime = (tmp_path / "user.json").stat().st_mtime_ns
+
+    db.save(tmp_path, timestamp=222)
+
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    assert (tmp_path / "user.json").stat().st_mtime_ns == user_json_mtime
+    assert table_index["user"] == 111
+
+
+def test_save_prunes_stale_table_hashes(tmp_path: Path):
+    """Should remove hash entries for public tables no longer exported."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+
+    del db._tables["tag"]
+    db.save(tmp_path, timestamp=222)
+
+    hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+    assert "tag.json" not in hashes
+    assert "user.json" in hashes
+    assert "__table__.json" in hashes
+
+
+def test_save_updates_last_modif_only_for_changed_tables(tmp_path: Path):
+    """Should keep previous last_modif values for unchanged table entries."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+
+    assert table_index["user"] == 222
+    assert table_index["tag"] == 111
+    assert table_index["email"] == 111
+    assert table_index["folder"] == 111
+    assert table_index["__table__"] == 222
+
+
+def test_save_without_changes_keeps_evolution_files_untouched(tmp_path: Path):
+    """Should not rewrite evolution files when no new evolution entry is produced."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    evolution_paths = [tmp_path / "evolution.json", tmp_path / "evolution.json.js"]
+    mtimes_before = {path: path.stat().st_mtime_ns for path in evolution_paths}
+
+    db.save(tmp_path, timestamp=333)
+
+    mtimes_after = {path: path.stat().st_mtime_ns for path in evolution_paths}
+
+    assert mtimes_after == mtimes_before
+
+
+def test_save_recovers_from_invalid_existing_table_index(tmp_path: Path):
+    """Should save even when an existing target __table__.json is invalid."""
+    db = TypedDB()
+    db.user.add({"id": "u1", "name": "User", "status": "active", "tag_ids": []})
+    (tmp_path / "__table__.json").write_text("{", encoding="utf-8")
+
+    db.save(tmp_path, timestamp=111, track_evolution=False)
+
+    table_index = json.loads((tmp_path / "__table__.json").read_text())
+    assert table_index == [
+        {"name": "user", "last_modif": 111},
+        {"name": "__table__", "last_modif": 111},
+    ]
+
+
 def test_save_and_reload(tmp_path: Path):
     """Should save and reload database correctly."""
     # Create and save
@@ -1549,6 +1709,148 @@ def test_schema_less_dataframe_writer_preserves_integer_and_float_dtypes(
     assert js_rows[1][2] == 1.0
     assert js_rows[2][1] is None
     assert js_rows[2][2] is None
+
+
+def test_dataframe_writers_do_not_touch_identical_files(tmp_path: Path):
+    """Should avoid rewriting identical JSON and JSON.js content."""
+    from jsonjsdb.writer import write_table_json, write_table_jsonjs
+
+    df = pl.DataFrame({"id": ["row-1"], "name": ["Alpha"]})
+    json_path = tmp_path / "data.json"
+    jsonjs_path = tmp_path / "data.json.js"
+
+    write_table_json(df, json_path)
+    write_table_jsonjs(df, "data", jsonjs_path)
+    mtimes_before = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+
+    write_table_json(df, json_path)
+    write_table_jsonjs(df, "data", jsonjs_path)
+
+    mtimes_after = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+
+    assert mtimes_after == mtimes_before
+
+
+def test_json_writer_preserves_exact_output_path(tmp_path: Path):
+    """Should write exactly the requested JSON path when called directly."""
+    from jsonjsdb.writer import write_table_json
+
+    df = pl.DataFrame({"id": ["row-1"], "name": ["Alpha"]})
+    json_path = tmp_path / "guide.data.json"
+
+    write_table_json(df, json_path)
+
+    assert json_path.exists()
+    assert not (tmp_path / "guide.data.data.json").exists()
+
+
+def test_dataframe_writers_update_hashes_for_nested_exports(tmp_path: Path):
+    """Should track unchanged direct writer exports under the DB root."""
+    from jsonjsdb.writer import write_table_json, write_table_jsonjs
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+    json_path = tmp_path / "md-doc" / "guide.json"
+    jsonjs_path = tmp_path / "md-doc" / "guide.json.js"
+
+    write_table_json(df, json_path)
+    write_table_jsonjs(df, "md-doc/guide", jsonjs_path)
+
+    hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+    assert hashes["md-doc/guide.json"].startswith("sha256:")
+
+    mtimes_before = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+
+    write_table_json(df, json_path)
+    write_table_jsonjs(df, "md-doc/guide", jsonjs_path)
+
+    mtimes_after = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+    assert mtimes_after == mtimes_before
+
+
+def test_pair_writer_reports_changes_for_nested_exports(tmp_path: Path):
+    """Should write paired JSON exports and report logical data changes."""
+    from jsonjsdb.writer import write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+
+    first_result = write_table_json_pair(df, "md-doc/guide", tmp_path)
+    second_result = write_table_json_pair(df, "md-doc/guide", tmp_path)
+
+    assert first_result.data_changed is True
+    assert first_result.json_written is True
+    assert first_result.jsonjs_written is True
+    assert second_result.data_changed is False
+    assert second_result.json_written is False
+    assert second_result.jsonjs_written is False
+    assert (tmp_path / "md-doc" / "guide.json").exists()
+    assert (tmp_path / "md-doc" / "guide.json.js").exists()
+
+
+def test_pair_writer_works_without_export_root(tmp_path: Path):
+    """Should still write paired exports when no DB root metadata is present."""
+    from jsonjsdb.writer import table_jsonjs_content, write_table_json_pair
+
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+    result = write_table_json_pair(df, "guide", tmp_path)
+
+    assert result.data_changed is True
+    assert table_jsonjs_content(df, "guide").startswith("jsonjs.data['guide'] = ")
+    assert not (tmp_path / "_meta" / "json-hashes.json").exists()
+
+
+def test_jsonjs_writer_does_not_poison_hash_before_json(tmp_path: Path):
+    """Should not mark canonical JSON unchanged before the JSON file is updated."""
+    from jsonjsdb.writer import write_table_json, write_table_jsonjs
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    json_path = tmp_path / "md-doc" / "guide.json"
+    jsonjs_path = tmp_path / "md-doc" / "guide.json.js"
+
+    old_df = pl.DataFrame({"id": ["doc-1"], "title": ["Old"]})
+    new_df = pl.DataFrame({"id": ["doc-1"], "title": ["New"]})
+    write_table_json(old_df, json_path)
+
+    write_table_jsonjs(new_df, "md-doc/guide", jsonjs_path)
+    write_table_json(new_df, json_path)
+
+    rows = json.loads(json_path.read_text())
+    assert rows == [{"id": "doc-1", "title": "New"}]
+
+
+def test_writer_hash_and_table_index_helpers(tmp_path: Path):
+    """Should expose hash and table index helpers with preserved last_modif values."""
+    from jsonjsdb.writer import table_json_hash, write_table_index
+
+    df = pl.DataFrame({"id": ["row-1"], "name": ["Alpha"]})
+    assert table_json_hash(df).startswith("sha256:")
+
+    write_table_index(
+        ["data"],
+        tmp_path / "__table__.json",
+        timestamp=222,
+        last_modifs={"data": 111, "__table__": 222},
+    )
+
+    table_index = json.loads((tmp_path / "__table__.json").read_text())
+    assert table_index == [
+        {"name": "data", "last_modif": 111},
+        {"name": "__table__", "last_modif": 222},
+    ]
+    assert (tmp_path / "__table__.json.js").exists()
 
 
 def test_load_nullable_column_with_late_value(tmp_path: Path):
