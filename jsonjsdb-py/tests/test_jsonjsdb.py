@@ -467,6 +467,30 @@ def test_save_prunes_stale_table_hashes(tmp_path: Path):
     assert "__table__.json" in hashes
 
 
+def test_save_preserves_subdirectory_json_hashes(tmp_path: Path):
+    """Should keep hash entries for managed JSON exports in subdirectories."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+
+    hash_path = tmp_path / "_meta" / "json-hashes.json"
+    hashes = json.loads(hash_path.read_text())
+    hashes["md-doc/example.json"] = "sha256:old"
+    hashes["_custom/state.json"] = "sha256:internal"
+    hashes["notes.txt"] = "sha256:notes"
+    hashes["obsolete.json"] = "sha256:old"
+    hash_path.write_text(json.dumps(hashes), encoding="utf-8")
+
+    db.save(tmp_path, timestamp=222)
+
+    updated_hashes = json.loads(hash_path.read_text())
+    assert updated_hashes["md-doc/example.json"] == "sha256:old"
+    assert updated_hashes["_custom/state.json"] == "sha256:internal"
+    assert updated_hashes["notes.txt"] == "sha256:notes"
+    assert "obsolete.json" not in updated_hashes
+    assert "user.json" in updated_hashes
+    assert "__table__.json" in updated_hashes
+
+
 def test_save_updates_last_modif_only_for_changed_tables(tmp_path: Path):
     """Should keep previous last_modif values for unchanged table entries."""
     db = TypedDB(DB_PATH)

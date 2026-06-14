@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.10
+
+fix: Preserve subdirectory JSON hash entries when `save()` rewrites `_meta/json-hashes.json`
+
 ## 0.8.9
 
 fix: Avoid rewriting unchanged exports from `save()` and writer calls while preserving `__table__.last_modif` for unchanged tables
