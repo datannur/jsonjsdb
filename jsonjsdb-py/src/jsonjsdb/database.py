@@ -251,7 +251,7 @@ def _merge_json_hashes(
     managed_hashes = {
         key: value
         for key, value in old_hashes.items()
-        if key.startswith("_") or not key.endswith(".json")
+        if key.startswith("_") or "/" in key or not key.endswith(".json")
     }
     managed_hashes.update(new_hashes)
     return managed_hashes
