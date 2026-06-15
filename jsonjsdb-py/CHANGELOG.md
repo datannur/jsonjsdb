@@ -4,6 +4,7 @@
 
 fix: Preserve composite evolution entry names when the first ID column contains the `---` separator and the second column is empty
 fix: Propagate manual `evolution.json` edits to derived evolution outputs and hash metadata
+add: Batch hash metadata updates for paired JSON exports with `export_hash_session()`
 
 ## 0.8.10
 

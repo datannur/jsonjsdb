@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -76,11 +78,13 @@ def write_table_json_pair(
     update_hash_metadata: bool = True,
     before_write: Callable[[bool], None] | None = None,
     json_path: Path | None = None,
+    hash_session: dict[str, str] | None = None,
 ) -> TableWriteResult:
     """Write .json and optional .json.js files for one logical table export."""
     json_path = json_path or output_dir / f"{table_name}.json"
     jsonjs_path = output_dir / f"{table_name}.json.js"
-    root, hashes, hash_key = _hash_context(json_path, export_root, previous_hashes)
+    active_hashes = hash_session if hash_session is not None else previous_hashes
+    root, hashes, hash_key = _hash_context(json_path, export_root, active_hashes)
 
     prepared_df = prepare_table_for_export(df)
     json_content = table_json_content_from_prepared(prepared_df)
@@ -105,10 +109,22 @@ def write_table_json_pair(
             jsonjs_path,
             table_jsonjs_content_from_prepared(prepared_df, table_name),
         )
-    if update_hash_metadata and root and hash_key:
+    if hash_session is not None and hash_key:
+        hash_session[hash_key] = json_hash
+    elif update_hash_metadata and root and hash_key:
         _update_export_hash(json_path, json_hash, export_root=root)
 
     return TableWriteResult(data_changed, json_written, jsonjs_written, json_hash)
+
+
+@contextmanager
+def export_hash_session(export_root: Path) -> Iterator[dict[str, str]]:
+    """Batch hash metadata updates for multiple exports under one root."""
+    hashes = load_json_hashes(export_root)
+    original_hashes = hashes.copy()
+    yield hashes
+    if hashes != original_hashes:
+        save_json_hashes(export_root, hashes)
 
 
 def table_json_content(df: pl.DataFrame) -> str:

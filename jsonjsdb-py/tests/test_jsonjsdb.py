@@ -1940,6 +1940,145 @@ def test_pair_writer_works_without_export_root(tmp_path: Path):
     assert not (tmp_path / "_meta" / "json-hashes.json").exists()
 
 
+def test_pair_writer_hash_session_batches_metadata_updates(tmp_path: Path):
+    """Should update hash metadata once for multiple paired exports."""
+    from jsonjsdb.writer import export_hash_session, write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    guide_df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+    intro_df = pl.DataFrame({"id": ["doc-2"], "title": ["Intro"]})
+
+    with export_hash_session(tmp_path) as hashes:
+        write_table_json_pair(
+            guide_df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+        assert not (tmp_path / "_meta" / "json-hashes.json").exists()
+        write_table_json_pair(
+            intro_df,
+            "md-doc/intro",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    saved_hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+    assert set(saved_hashes) == {"md-doc/guide.json", "md-doc/intro.json"}
+    assert saved_hashes["md-doc/guide.json"] == file_hash(
+        tmp_path / "md-doc" / "guide.json"
+    )
+    assert saved_hashes["md-doc/intro.json"] == file_hash(
+        tmp_path / "md-doc" / "intro.json"
+    )
+
+
+def test_pair_writer_uses_empty_hash_session_without_loading_manifest(
+    tmp_path: Path,
+):
+    """Should treat an empty hash session as the active hash map."""
+    from jsonjsdb.writer import write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    hash_path = tmp_path / "_meta" / "json-hashes.json"
+    hash_path.parent.mkdir(parents=True)
+    hash_path.write_text(
+        json.dumps({"md-doc/guide.json": "sha256:stale"}),
+        encoding="utf-8",
+    )
+    hashes: dict[str, str] = {}
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+
+    result = write_table_json_pair(
+        df,
+        "md-doc/guide",
+        tmp_path,
+        export_root=tmp_path,
+        hash_session=hashes,
+    )
+
+    assert result.data_changed is True
+    assert hashes["md-doc/guide.json"] == file_hash(tmp_path / "md-doc" / "guide.json")
+
+
+def test_pair_writer_hash_session_preserves_unchanged_exports(tmp_path: Path):
+    """Should keep write-if-changed behavior when using a hash session."""
+    from jsonjsdb.writer import export_hash_session, write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+
+    with export_hash_session(tmp_path) as hashes:
+        write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    json_path = tmp_path / "md-doc" / "guide.json"
+    jsonjs_path = tmp_path / "md-doc" / "guide.json.js"
+    mtimes_before = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+
+    with export_hash_session(tmp_path) as hashes:
+        result = write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    mtimes_after = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+    assert result.data_changed is False
+    assert result.json_written is False
+    assert result.jsonjs_written is False
+    assert mtimes_after == mtimes_before
+
+
+def test_pair_writer_hash_session_recreates_missing_jsonjs(tmp_path: Path):
+    """Should recreate missing derived JSON.js files when hash matches."""
+    from jsonjsdb.writer import export_hash_session, write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+
+    with export_hash_session(tmp_path) as hashes:
+        write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    jsonjs_path = tmp_path / "md-doc" / "guide.json.js"
+    jsonjs_path.unlink()
+
+    with export_hash_session(tmp_path) as hashes:
+        result = write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    assert result.data_changed is False
+    assert result.json_written is False
+    assert result.jsonjs_written is True
+    assert jsonjs_path.exists()
+
+
 def test_jsonjs_writer_does_not_poison_hash_before_json(tmp_path: Path):
     """Should not mark canonical JSON unchanged before the JSON file is updated."""
     from jsonjsdb.writer import write_table_json, write_table_jsonjs
