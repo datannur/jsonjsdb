@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.11
+
+fix: Preserve composite evolution entry names when the first ID column contains the `---` separator and the second column is empty
+
 ## 0.8.10
 
 fix: Preserve subdirectory JSON hash entries when `save()` rewrites `_meta/json-hashes.json`

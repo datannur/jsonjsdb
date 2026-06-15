@@ -101,16 +101,16 @@ def _get_parent_info(
     return (None, None)
 
 
-def _add_composite_id_if_missing(df: pl.DataFrame) -> tuple[pl.DataFrame, bool]:
+def _add_composite_id_if_missing(df: pl.DataFrame) -> tuple[pl.DataFrame, str | None]:
     """Add composite id column if 'id' column is missing.
 
-    Returns tuple of (modified_df, has_composite_id).
+    Returns tuple of (modified_df, composite name column).
     """
     if df.is_empty():
-        return df, False
+        return df, None
 
     if "id" in df.columns:
-        return df, False
+        return df, None
 
     columns = df.columns
     if len(columns) < 2:
@@ -120,7 +120,7 @@ def _add_composite_id_if_missing(df: pl.DataFrame) -> tuple[pl.DataFrame, bool]:
     df_with_id = df.with_columns(
         (pl.col(col1).cast(pl.Utf8) + "---" + pl.col(col2).cast(pl.Utf8)).alias("id")
     )
-    return df_with_id, True
+    return df_with_id, col2
 
 
 def _df_to_dict_by_id(df: pl.DataFrame) -> dict[str | int, dict[str, Any]]:
@@ -149,6 +149,13 @@ def _normalize_id_column(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty() or "id" not in df.columns:
         return df
     return df.with_columns(pl.col("id").cast(pl.Utf8))
+
+
+def _get_composite_name(row: dict[str, Any], composite_name_column: str | None) -> Any:
+    """Get the display name from the second composite id column."""
+    if composite_name_column is None:
+        return None
+    return row.get(composite_name_column)
 
 
 def compare_datasets(
@@ -183,9 +190,10 @@ def compare_datasets(
     old_df = _normalize_id_column(old_df)
     new_df = _normalize_id_column(new_df)
 
-    old_df, has_composite_old = _add_composite_id_if_missing(old_df)
-    new_df, has_composite_new = _add_composite_id_if_missing(new_df)
-    has_composite_id = has_composite_old or has_composite_new
+    old_df, composite_name_column_old = _add_composite_id_if_missing(old_df)
+    new_df, composite_name_column_new = _add_composite_id_if_missing(new_df)
+    composite_name_column = composite_name_column_new or composite_name_column_old
+    has_composite_id = composite_name_column is not None
 
     map_old = _df_to_dict_by_id(old_df)
     map_new = _df_to_dict_by_id(new_df)
@@ -239,7 +247,7 @@ def compare_datasets(
                     variable=variable,
                     old_value=old_value,
                     new_value=new_value,
-                    name=str(entity_id).split("---")[1] if has_composite_id else None,
+                    name=_get_composite_name(obj_new, composite_name_column),
                 )
             )
 
@@ -260,7 +268,7 @@ def compare_datasets(
                 variable=None,
                 old_value=None,
                 new_value=None,
-                name=str(entity_id).split("---")[1] if has_composite_id else None,
+                name=_get_composite_name(obj_new, composite_name_column),
             )
         )
 
@@ -282,8 +290,8 @@ def compare_datasets(
                 old_value=None,
                 new_value=None,
                 name=(
-                    str(entity_id).split("---")[1]
-                    if has_composite_id
+                    _get_composite_name(obj_old, composite_name_column)
+                    if composite_name_column is not None
                     else obj_old.get("name")
                 ),
             )
