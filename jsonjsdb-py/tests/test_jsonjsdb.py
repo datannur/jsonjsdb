@@ -11,6 +11,7 @@ import polars as pl
 
 import jsonjsdb
 from jsonjsdb import Jsonjsdb, Table
+from jsonjsdb.writer import file_hash
 
 DB_PATH = Path(__file__).parent / "db"
 
@@ -526,6 +527,109 @@ def test_save_without_changes_keeps_evolution_files_untouched(tmp_path: Path):
     mtimes_after = {path: path.stat().st_mtime_ns for path in evolution_paths}
 
     assert mtimes_after == mtimes_before
+
+
+def test_save_regenerates_evolution_outputs_after_manual_json_edit(tmp_path: Path):
+    """Should propagate manual evolution.json edits to derived outputs."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated", status="inactive")
+    db.save(tmp_path, timestamp=222)
+
+    evolution_path = tmp_path / "evolution.json"
+    evolution_js_path = tmp_path / "evolution.json.js"
+    edited_entries = json.loads(evolution_path.read_text(encoding="utf-8"))[:-1]
+    evolution_path.write_text(
+        json.dumps(edited_entries, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    db.save(tmp_path, timestamp=333)
+
+    evolution_js = evolution_js_path.read_text(encoding="utf-8")
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+
+    assert evolution_js.count('"update"') == len(edited_entries)
+    assert table_index["evolution"] == 333
+    assert hashes["evolution.json"] == file_hash(evolution_path)
+
+
+def test_save_regenerates_evolution_outputs_after_manual_json_clear(tmp_path: Path):
+    """Should allow manual edits that remove all evolution entries."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    evolution_path = tmp_path / "evolution.json"
+    evolution_js_path = tmp_path / "evolution.json.js"
+    evolution_path.write_text("[]\n", encoding="utf-8")
+
+    db.save(tmp_path, timestamp=333)
+
+    evolution_js = evolution_js_path.read_text(encoding="utf-8")
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+
+    assert json.loads(evolution_path.read_text(encoding="utf-8")) == []
+    assert evolution_js.startswith("jsonjs.data['evolution'] = ")
+    assert evolution_js.count('"update"') == 0
+    assert table_index["evolution"] == 333
+    assert hashes["evolution.json"] == file_hash(evolution_path)
+
+
+def test_save_without_evolution_hash_state_keeps_last_modif(tmp_path: Path):
+    """Should initialize evolution hash metadata without treating data as changed."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    hash_path = tmp_path / "_meta" / "json-hashes.json"
+    hashes = json.loads(hash_path.read_text())
+    hashes.pop("evolution.json")
+    hash_path.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+
+    db.save(tmp_path, timestamp=333)
+
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    updated_hashes = json.loads(hash_path.read_text())
+
+    assert table_index["evolution"] == 222
+    assert updated_hashes["evolution.json"] == file_hash(tmp_path / "evolution.json")
+
+
+def test_save_regenerates_missing_evolution_jsonjs_without_bumping_last_modif(
+    tmp_path: Path,
+):
+    """Should restore a missing derived evolution JSON.js file without data churn."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    evolution_js_path = tmp_path / "evolution.json.js"
+    evolution_js_path.unlink()
+
+    db.save(tmp_path, timestamp=333)
+
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+
+    assert evolution_js_path.exists()
+    assert table_index["evolution"] == 222
 
 
 def test_save_recovers_from_invalid_existing_table_index(tmp_path: Path):

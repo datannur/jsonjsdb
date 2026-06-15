@@ -438,6 +438,8 @@ def save_evolution(
     entries: list[EvolutionEntry],
     path: Path,
     xlsx_path: Path | None = None,
+    *,
+    allow_empty: bool = False,
 ) -> None:
     """Save evolution entries to JSON and optionally XLSX.
 
@@ -445,8 +447,9 @@ def save_evolution(
         entries: List of evolution entries to save
         path: Directory path for evolution.json
         xlsx_path: Optional path for evolution.xlsx output
+        allow_empty: Write empty evolution files when entries is empty
     """
-    if not entries:
+    if not entries and not allow_empty:
         return
 
     # Write evolution.json

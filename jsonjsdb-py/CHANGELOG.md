@@ -3,6 +3,7 @@
 ## 0.8.11
 
 fix: Preserve composite evolution entry names when the first ID column contains the `---` separator and the second column is empty
+fix: Propagate manual `evolution.json` edits to derived evolution outputs and hash metadata
 
 ## 0.8.10
 

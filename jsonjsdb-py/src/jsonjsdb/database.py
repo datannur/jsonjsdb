@@ -20,6 +20,7 @@ from .loader import load_table, load_table_index
 from .table import Table
 from .types import TableRow
 from .writer import (
+    file_hash,
     load_json_hashes,
     save_json_hashes,
     table_index_df,
@@ -198,6 +199,21 @@ class Jsonjsdb:
             # Filter cascade entries (child add/delete when parent has same operation)
             new_entries = filter_cascade_entries(new_entries)
 
+        evolution_json_path = save_path / "evolution.json"
+        evolution_hash_key = "evolution.json"
+        old_evolution_hash = old_hashes.get(evolution_hash_key)
+        current_evolution_hash = (
+            file_hash(evolution_json_path) if evolution_json_path.exists() else None
+        )
+        evolution_json_changed = (
+            old_evolution_hash is not None
+            and current_evolution_hash is not None
+            and current_evolution_hash != old_evolution_hash
+        )
+        evolution_jsonjs_missing = (
+            write_js and not (save_path / "evolution.json.js").exists()
+        )
+
         if track_evolution and new_entries:
             xlsx_path = Path(evolution_xlsx) if evolution_xlsx else None
             existing_entries = load_evolution(save_path, xlsx_path)
@@ -206,9 +222,22 @@ class Jsonjsdb:
             if "evolution" not in table_names:  # pragma: no branch
                 table_names.append("evolution")
             last_modifs["evolution"] = ts
-        elif (save_path / "evolution.json").exists():
+            new_hashes[evolution_hash_key] = file_hash(evolution_json_path)
+        elif evolution_json_path.exists():
+            if evolution_json_changed or evolution_jsonjs_missing:
+                xlsx_path = Path(evolution_xlsx) if evolution_xlsx else None
+                existing_entries = load_evolution(save_path, xlsx_path)
+                save_evolution(
+                    existing_entries,
+                    save_path,
+                    xlsx_path,
+                    allow_empty=True,
+                )
             table_names.append("evolution")
-            last_modifs["evolution"] = old_last_modifs.get("evolution", ts)
+            last_modifs["evolution"] = (
+                ts if evolution_json_changed else old_last_modifs.get("evolution", ts)
+            )
+            new_hashes[evolution_hash_key] = file_hash(evolution_json_path)
 
         last_modifs["__table__"] = (
             ts
