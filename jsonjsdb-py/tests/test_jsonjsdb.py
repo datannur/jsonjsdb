@@ -11,6 +11,7 @@ import polars as pl
 
 import jsonjsdb
 from jsonjsdb import Jsonjsdb, Table
+from jsonjsdb.writer import file_hash
 
 DB_PATH = Path(__file__).parent / "db"
 
@@ -526,6 +527,109 @@ def test_save_without_changes_keeps_evolution_files_untouched(tmp_path: Path):
     mtimes_after = {path: path.stat().st_mtime_ns for path in evolution_paths}
 
     assert mtimes_after == mtimes_before
+
+
+def test_save_regenerates_evolution_outputs_after_manual_json_edit(tmp_path: Path):
+    """Should propagate manual evolution.json edits to derived outputs."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated", status="inactive")
+    db.save(tmp_path, timestamp=222)
+
+    evolution_path = tmp_path / "evolution.json"
+    evolution_js_path = tmp_path / "evolution.json.js"
+    edited_entries = json.loads(evolution_path.read_text(encoding="utf-8"))[:-1]
+    evolution_path.write_text(
+        json.dumps(edited_entries, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    db.save(tmp_path, timestamp=333)
+
+    evolution_js = evolution_js_path.read_text(encoding="utf-8")
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+
+    assert evolution_js.count('"update"') == len(edited_entries)
+    assert table_index["evolution"] == 333
+    assert hashes["evolution.json"] == file_hash(evolution_path)
+
+
+def test_save_regenerates_evolution_outputs_after_manual_json_clear(tmp_path: Path):
+    """Should allow manual edits that remove all evolution entries."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    evolution_path = tmp_path / "evolution.json"
+    evolution_js_path = tmp_path / "evolution.json.js"
+    evolution_path.write_text("[]\n", encoding="utf-8")
+
+    db.save(tmp_path, timestamp=333)
+
+    evolution_js = evolution_js_path.read_text(encoding="utf-8")
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+
+    assert json.loads(evolution_path.read_text(encoding="utf-8")) == []
+    assert evolution_js.startswith("jsonjs.data['evolution'] = ")
+    assert evolution_js.count('"update"') == 0
+    assert table_index["evolution"] == 333
+    assert hashes["evolution.json"] == file_hash(evolution_path)
+
+
+def test_save_without_evolution_hash_state_keeps_last_modif(tmp_path: Path):
+    """Should initialize evolution hash metadata without treating data as changed."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    hash_path = tmp_path / "_meta" / "json-hashes.json"
+    hashes = json.loads(hash_path.read_text())
+    hashes.pop("evolution.json")
+    hash_path.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+
+    db.save(tmp_path, timestamp=333)
+
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+    updated_hashes = json.loads(hash_path.read_text())
+
+    assert table_index["evolution"] == 222
+    assert updated_hashes["evolution.json"] == file_hash(tmp_path / "evolution.json")
+
+
+def test_save_regenerates_missing_evolution_jsonjs_without_bumping_last_modif(
+    tmp_path: Path,
+):
+    """Should restore a missing derived evolution JSON.js file without data churn."""
+    db = TypedDB(DB_PATH)
+    db.save(tmp_path, timestamp=111)
+    db.user.update("user_1", name="Alice Updated")
+    db.save(tmp_path, timestamp=222)
+
+    evolution_js_path = tmp_path / "evolution.json.js"
+    evolution_js_path.unlink()
+
+    db.save(tmp_path, timestamp=333)
+
+    table_index = {
+        entry["name"]: entry["last_modif"]
+        for entry in json.loads((tmp_path / "__table__.json").read_text())
+    }
+
+    assert evolution_js_path.exists()
+    assert table_index["evolution"] == 222
 
 
 def test_save_recovers_from_invalid_existing_table_index(tmp_path: Path):
@@ -1834,6 +1938,145 @@ def test_pair_writer_works_without_export_root(tmp_path: Path):
     assert result.data_changed is True
     assert table_jsonjs_content(df, "guide").startswith("jsonjs.data['guide'] = ")
     assert not (tmp_path / "_meta" / "json-hashes.json").exists()
+
+
+def test_pair_writer_hash_session_batches_metadata_updates(tmp_path: Path):
+    """Should update hash metadata once for multiple paired exports."""
+    from jsonjsdb.writer import export_hash_session, write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    guide_df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+    intro_df = pl.DataFrame({"id": ["doc-2"], "title": ["Intro"]})
+
+    with export_hash_session(tmp_path) as hashes:
+        write_table_json_pair(
+            guide_df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+        assert not (tmp_path / "_meta" / "json-hashes.json").exists()
+        write_table_json_pair(
+            intro_df,
+            "md-doc/intro",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    saved_hashes = json.loads((tmp_path / "_meta" / "json-hashes.json").read_text())
+    assert set(saved_hashes) == {"md-doc/guide.json", "md-doc/intro.json"}
+    assert saved_hashes["md-doc/guide.json"] == file_hash(
+        tmp_path / "md-doc" / "guide.json"
+    )
+    assert saved_hashes["md-doc/intro.json"] == file_hash(
+        tmp_path / "md-doc" / "intro.json"
+    )
+
+
+def test_pair_writer_uses_empty_hash_session_without_loading_manifest(
+    tmp_path: Path,
+):
+    """Should treat an empty hash session as the active hash map."""
+    from jsonjsdb.writer import write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    hash_path = tmp_path / "_meta" / "json-hashes.json"
+    hash_path.parent.mkdir(parents=True)
+    hash_path.write_text(
+        json.dumps({"md-doc/guide.json": "sha256:stale"}),
+        encoding="utf-8",
+    )
+    hashes: dict[str, str] = {}
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+
+    result = write_table_json_pair(
+        df,
+        "md-doc/guide",
+        tmp_path,
+        export_root=tmp_path,
+        hash_session=hashes,
+    )
+
+    assert result.data_changed is True
+    assert hashes["md-doc/guide.json"] == file_hash(tmp_path / "md-doc" / "guide.json")
+
+
+def test_pair_writer_hash_session_preserves_unchanged_exports(tmp_path: Path):
+    """Should keep write-if-changed behavior when using a hash session."""
+    from jsonjsdb.writer import export_hash_session, write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+
+    with export_hash_session(tmp_path) as hashes:
+        write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    json_path = tmp_path / "md-doc" / "guide.json"
+    jsonjs_path = tmp_path / "md-doc" / "guide.json.js"
+    mtimes_before = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+
+    with export_hash_session(tmp_path) as hashes:
+        result = write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    mtimes_after = {
+        json_path: json_path.stat().st_mtime_ns,
+        jsonjs_path: jsonjs_path.stat().st_mtime_ns,
+    }
+    assert result.data_changed is False
+    assert result.json_written is False
+    assert result.jsonjs_written is False
+    assert mtimes_after == mtimes_before
+
+
+def test_pair_writer_hash_session_recreates_missing_jsonjs(tmp_path: Path):
+    """Should recreate missing derived JSON.js files when hash matches."""
+    from jsonjsdb.writer import export_hash_session, write_table_json_pair
+
+    (tmp_path / "__table__.json").write_text("[]", encoding="utf-8")
+    df = pl.DataFrame({"id": ["doc-1"], "title": ["Guide"]})
+
+    with export_hash_session(tmp_path) as hashes:
+        write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    jsonjs_path = tmp_path / "md-doc" / "guide.json.js"
+    jsonjs_path.unlink()
+
+    with export_hash_session(tmp_path) as hashes:
+        result = write_table_json_pair(
+            df,
+            "md-doc/guide",
+            tmp_path,
+            export_root=tmp_path,
+            hash_session=hashes,
+        )
+
+    assert result.data_changed is False
+    assert result.json_written is False
+    assert result.jsonjs_written is True
+    assert jsonjs_path.exists()
 
 
 def test_jsonjs_writer_does_not_poison_hash_before_json(tmp_path: Path):

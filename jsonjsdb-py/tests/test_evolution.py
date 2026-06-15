@@ -175,6 +175,80 @@ class TestCompositeId:
         assert result[0].parent_entity_id == "var_2"
         assert result[0].parent_entity == "variable"
 
+    def test_composite_id_name_preserves_empty_second_value_on_add(self):
+        """Should read composite name from the row when first key has separator."""
+        old_df = pl.DataFrame(
+            {
+                "enumeration_id": ["domain---enum"],
+                "value": ["A"],
+                "description": ["non-empty value"],
+            }
+        )
+        new_df = pl.DataFrame(
+            {
+                "enumeration_id": ["domain---enum", "domain---enum"],
+                "value": ["A", ""],
+                "description": ["non-empty value", "empty value"],
+            }
+        )
+
+        result = compare_datasets(old_df, new_df, 1234567890, "value")
+
+        assert len(result) == 1
+        assert result[0].type == "add"
+        assert result[0].entity_id == "domain---enum---"
+        assert result[0].parent_entity_id == "domain---enum"
+        assert result[0].name == ""
+
+    def test_composite_id_name_preserves_empty_second_value_on_delete(self):
+        """Should preserve empty composite name for deleted rows."""
+        old_df = pl.DataFrame(
+            {
+                "enumeration_id": ["domain---enum", "domain---enum"],
+                "value": ["A", ""],
+                "description": ["non-empty value", "empty value"],
+            }
+        )
+        new_df = pl.DataFrame(
+            {
+                "enumeration_id": ["domain---enum"],
+                "value": ["A"],
+                "description": ["non-empty value"],
+            }
+        )
+
+        result = compare_datasets(old_df, new_df, 1234567890, "value")
+
+        assert len(result) == 1
+        assert result[0].type == "delete"
+        assert result[0].entity_id == "domain---enum---"
+        assert result[0].parent_entity_id == "domain---enum"
+        assert result[0].name == ""
+
+    def test_composite_id_name_uses_second_column_on_update(self):
+        """Should not parse composite IDs for update names."""
+        old_df = pl.DataFrame(
+            {
+                "enumeration_id": ["domain---enum"],
+                "value": [""],
+                "description": ["empty value"],
+            }
+        )
+        new_df = pl.DataFrame(
+            {
+                "enumeration_id": ["domain---enum"],
+                "value": [""],
+                "description": ["updated empty value"],
+            }
+        )
+
+        result = compare_datasets(old_df, new_df, 1234567890, "value")
+
+        assert len(result) == 1
+        assert result[0].type == "update"
+        assert result[0].entity_id == "domain---enum---"
+        assert result[0].name == ""
+
     def test_insufficient_columns_raises_error(self):
         """Should raise error when not enough columns for composite id."""
         old_df = pl.DataFrame({"name": ["test"]})
