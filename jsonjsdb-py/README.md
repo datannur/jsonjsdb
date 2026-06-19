@@ -89,8 +89,10 @@ table.add(User(id="u2", name="Bob", tag_ids=[]))
 db.user.add({"id": "u1", "name": "Alice", ...})  # Add row (id required)
 db.user.add_all([...])                           # Add multiple rows (batch)
 db.user.upsert({"id": "u1", ...})                # Add or update → bool (True=added)
+db.user.upsert_all([...])                        # Insert-or-replace multiple rows (single rebuild)
 
 db.user.get("u1")                                # → User | None
+db.user.get_many(["u1", "u2"])                   # → list[User] (only requested rows)
 db.user.get_by("email", "alice@test.com")        # → User | None (by column)
 db.user.exists("u1")                             # → bool
 db.user.all()                                    # → list[User]

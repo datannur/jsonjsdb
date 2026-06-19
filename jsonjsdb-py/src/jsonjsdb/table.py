@@ -131,6 +131,18 @@ class Table(Generic[T]):
         results = self.where(column, "==", value)
         return results[0] if results else None
 
+    def get_many(self, ids: list[ID]) -> list[T]:
+        """Get multiple rows by ID as entities.
+
+        Reconstructs only the requested rows (K entities) instead of all() (N).
+        IDs that are not present are simply absent from the result; the order of
+        the result follows the table, not ``ids``.
+        """
+        if self._df.is_empty() or "id" not in self._df.columns:
+            return []
+        sub = self._df.filter(pl.col("id").is_in(ids))
+        return [self._row_to_entity(row) for row in sub.iter_rows(named=True)]
+
     def all(self) -> list[T]:
         """Get all rows as a list of entities."""
         return [self._row_to_entity(row) for row in self._df.iter_rows(named=True)]
@@ -290,6 +302,54 @@ class Table(Generic[T]):
             self._df = new_df
         else:
             self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
+
+    def upsert_all(self, rows: list[T]) -> None:
+        """Insert-or-replace multiple rows in a single rebuild.
+
+        For each row, replaces the existing row with the same id (preserving its
+        position in the table) or inserts it (appended at the end) when the id is
+        new. A single insert-or-replace instead of remove_all + add_all.
+
+        The incoming batch is validated like add_all (each row needs an 'id', no
+        duplicate id *within the batch*) — but an id already present in the table
+        is expected and triggers a replacement, not an error.
+
+        runtime_fields columns that are absent from the incoming rows are
+        preserved on replaced rows.
+        """
+        if not rows:
+            return
+
+        dicts = [self._entity_to_dict(r) for r in rows]
+        for d in dicts:
+            if "id" not in d:
+                raise ValueError("Row must have an 'id' field")
+
+        incoming_ids = [str(d["id"]) for d in dicts]
+        if len(set(incoming_ids)) != len(incoming_ids):
+            raise ValueError("Duplicate IDs in rows to upsert")
+
+        prepared = [self._prepare_row_for_storage(d) for d in dicts]
+        new_df = self._apply_storage_schema(
+            pl.DataFrame(prepared, infer_schema_length=None)
+        )
+
+        if self._df.is_empty():
+            self._df = new_df
+            return
+
+        # Add any columns introduced by the batch so update() keeps them
+        # (update with how="full" only retains columns present on the left).
+        base = self._df
+        new_columns = [c for c in new_df.columns if c not in base.columns]
+        if new_columns:
+            base = base.with_columns(
+                pl.lit(None).cast(new_df.schema[c]).alias(c) for c in new_columns
+            )
+
+        self._df = base.update(  # type: ignore[attr-defined]
+            new_df, on="id", how="full", include_nulls=True
+        )
 
     def update(self, id: ID, **kwargs: Any) -> None:
         """Update a row by ID. Raises KeyError if not found."""

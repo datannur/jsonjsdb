@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+add: `Table.get_many(ids)` to reconstruct only the requested rows instead of `all()`
+add: `Table.upsert_all(rows)` for insert-or-replace in a single rebuild, preserving row position and runtime fields
+
 ## 0.8.11
 
 fix: Preserve composite evolution entry names when the first ID column contains the `---` separator and the second column is empty

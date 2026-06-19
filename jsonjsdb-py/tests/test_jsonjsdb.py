@@ -267,6 +267,108 @@ def test_add_all():
     assert len(db["tag"].all()) == initial_count + 2
 
 
+def test_get_many():
+    """Should reconstruct only the requested rows, in table order."""
+    db = Jsonjsdb(DB_PATH)
+    users = db["user"].get_many(["user_3", "user_1", "nonexistent"])
+    assert [u["id"] for u in users] == ["user_1", "user_3"]
+
+
+def test_get_many_empty_ids():
+    """Should return empty list for no matches."""
+    db = Jsonjsdb(DB_PATH)
+    assert db["user"].get_many([]) == []
+    assert db["user"].get_many(["nope"]) == []
+
+
+def test_get_many_empty_table():
+    """Should return empty list on an empty table."""
+    table: Table[dict] = Table("empty")
+    assert table.get_many(["x"]) == []
+
+
+def test_upsert_all_inserts_and_replaces():
+    """Should replace existing rows in place and append new ones."""
+    db = Jsonjsdb(DB_PATH)
+    db["tag"].upsert_all(
+        [
+            {"id": "tag_1", "label": "Relabelled"},
+            {"id": "tag_new", "label": "Brand New"},
+        ]
+    )
+
+    assert db["tag"].get("tag_1")["label"] == "Relabelled"  # type: ignore[index]
+    assert db["tag"].get("tag_new")["label"] == "Brand New"  # type: ignore[index]
+
+
+def test_upsert_all_preserves_row_order():
+    """Replaced rows keep their original position; new rows go last."""
+    db = Jsonjsdb(DB_PATH)
+    original_ids = db["user"].df["id"].to_list()
+
+    db["user"].upsert_all(
+        [
+            {"id": "user_2", "name": "Bob 2", "status": "active", "tag_ids": []},
+            {"id": "user_z", "name": "Zed", "status": "active", "tag_ids": []},
+        ]
+    )
+
+    assert db["user"].df["id"].to_list() == original_ids + ["user_z"]
+    assert db["user"].get("user_2")["name"] == "Bob 2"  # type: ignore[index]
+
+
+def test_upsert_all_introduces_new_column():
+    """A column present only in the batch should be added to the table."""
+    import polars as pl
+
+    table: Table[dict] = Table("item")
+    table._df = pl.DataFrame([{"id": "1", "name": "One"}])
+
+    table.upsert_all(
+        [{"id": "1", "name": "One", "score": 5}, {"id": "2", "name": "Two", "score": 9}]
+    )
+
+    assert "score" in table.df.columns
+    assert table.get("1") == {"id": "1", "name": "One", "score": 5}
+    assert table.get("2") == {"id": "2", "name": "Two", "score": 9}
+
+
+def test_upsert_all_duplicate_in_batch_raises():
+    """Should raise on duplicate id within the incoming batch."""
+    db = Jsonjsdb(DB_PATH)
+    with pytest.raises(ValueError, match="Duplicate IDs"):
+        db["tag"].upsert_all(
+            [{"id": "tag_1", "label": "A"}, {"id": "tag_1", "label": "B"}]
+        )
+
+
+def test_upsert_all_missing_id_raises():
+    """Should raise when a row lacks an id."""
+    db = Jsonjsdb(DB_PATH)
+    with pytest.raises(ValueError, match="must have an 'id'"):
+        db["tag"].upsert_all([{"label": "No ID"}])  # type: ignore[list-item]
+
+
+def test_upsert_all_into_empty_table():
+    """Should populate an empty table."""
+    db = Jsonjsdb(DB_PATH)
+    db["user"].remove_all(db["user"].df["id"].to_list())
+    assert db["user"].is_empty
+
+    db["user"].upsert_all(
+        [{"id": "user_1", "name": "Alice", "status": "active", "tag_ids": []}]
+    )
+    assert db["user"].get("user_1")["name"] == "Alice"  # type: ignore[index]
+
+
+def test_upsert_all_empty_is_noop():
+    """Should do nothing for an empty batch."""
+    db = Jsonjsdb(DB_PATH)
+    before = db["user"].df["id"].to_list()
+    db["user"].upsert_all([])
+    assert db["user"].df["id"].to_list() == before
+
+
 def test_update_row():
     """Should update an existing row."""
     db = Jsonjsdb(DB_PATH)
@@ -997,6 +1099,27 @@ def test_runtime_fields_excluded_on_save(tmp_path: Path):
     assert saved[0]["name"] == "Test"
     assert "_seen" not in saved[0]
     assert "_processed" not in saved[0]
+
+
+def test_upsert_all_preserves_runtime_fields():
+    """Replacing a row keeps its runtime_fields when the batch omits them."""
+    import polars as pl
+
+    class ItemTable(Table[dict]):
+        runtime_fields = {"_seen"}
+
+    table = ItemTable("item")
+    table._df = pl.DataFrame(
+        [
+            {"id": "1", "name": "One", "_seen": True},
+            {"id": "2", "name": "Two", "_seen": True},
+        ]
+    )
+
+    table.upsert_all([{"id": "1", "name": "One*"}, {"id": "3", "name": "Three"}])
+
+    assert table.get("1") == {"id": "1", "name": "One*", "_seen": True}
+    assert table.get("3") == {"id": "3", "name": "Three", "_seen": None}
 
 
 def test_runtime_fields_empty_set():
