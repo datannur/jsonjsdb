@@ -2257,3 +2257,104 @@ def test_load_nullable_column_with_late_value(tmp_path: Path):
     assert len(all_rows) == 120
     assert all_rows[110]["key"] == 1
     assert all_rows[0]["key"] is None
+
+
+# --- Numeric list serialization (bbox) ---
+
+
+def test_numeric_list_written_as_json_array(tmp_path: Path):
+    """Should write List(Float64) columns (e.g. bbox) as JSON arrays, not CSV."""
+    from jsonjsdb.writer import write_table_json, write_table_jsonjs
+
+    df = pl.DataFrame(
+        {
+            "id": ["dataset-1"],
+            "bbox": pl.Series([[6.02, 45.8, 10.5, 47.8]], dtype=pl.List(pl.Float64)),
+        }
+    )
+
+    write_table_json(df, tmp_path / "data.json")
+    write_table_jsonjs(df, "data", tmp_path / "data.json.js")
+
+    rows = json.loads((tmp_path / "data.json").read_text())
+    assert rows[0]["bbox"] == [6.02, 45.8, 10.5, 47.8]
+    assert isinstance(rows[0]["bbox"], list)
+
+    js_rows = _load_jsonjs_payload(tmp_path / "data.json.js", "data")
+    assert js_rows[1][1] == [6.02, 45.8, 10.5, 47.8]
+
+
+def test_integer_list_written_as_json_array(tmp_path: Path):
+    """Should write List(Int64) columns as JSON arrays, not CSV."""
+    from jsonjsdb.writer import write_table_json
+
+    df = pl.DataFrame(
+        {
+            "id": ["row-1"],
+            "years": pl.Series([[2020, 2021, 2022]], dtype=pl.List(pl.Int64)),
+        }
+    )
+
+    write_table_json(df, tmp_path / "data.json")
+
+    rows = json.loads((tmp_path / "data.json").read_text())
+    assert rows[0]["years"] == [2020, 2021, 2022]
+    assert all(isinstance(v, int) for v in rows[0]["years"])
+
+
+def test_string_list_still_written_as_csv(tmp_path: Path):
+    """Should keep List(Utf8) columns (e.g. *_ids) as comma-separated strings."""
+    from jsonjsdb.writer import write_table_json
+
+    df = pl.DataFrame(
+        {
+            "id": ["row-1"],
+            "tag_ids": pl.Series([["a", "b", "c"]], dtype=pl.List(pl.Utf8)),
+        }
+    )
+
+    write_table_json(df, tmp_path / "data.json")
+
+    rows = json.loads((tmp_path / "data.json").read_text())
+    assert rows[0]["tag_ids"] == "a,b,c"
+
+
+def test_numeric_list_round_trip(tmp_path: Path):
+    """Should preserve numeric lists as List(Float64) and *_ids as List(Utf8)."""
+    from jsonjsdb.loader import load_table
+    from jsonjsdb.writer import write_table_json
+
+    df = pl.DataFrame(
+        {
+            "id": ["row-1"],
+            "bbox": pl.Series([[6.02, 45.8, 10.5, 47.8]], dtype=pl.List(pl.Float64)),
+            "tag_ids": pl.Series([["a", "b", "c"]], dtype=pl.List(pl.Utf8)),
+        }
+    )
+
+    write_table_json(df, tmp_path / "data.json")
+    loaded = load_table(tmp_path / "data.json")
+
+    assert loaded.schema["bbox"] == pl.List(pl.Float64)
+    assert loaded["bbox"].to_list() == [[6.02, 45.8, 10.5, 47.8]]
+    assert loaded.schema["tag_ids"] == pl.List(pl.Utf8)
+    assert loaded["tag_ids"].to_list() == [["a", "b", "c"]]
+
+
+def test_nan_in_numeric_list_becomes_null(tmp_path: Path):
+    """Should replace NaN inside a float list with null for valid JSON."""
+    from jsonjsdb.writer import write_table_json
+
+    df = pl.DataFrame(
+        {
+            "id": ["row-1"],
+            "bbox": pl.Series(
+                [[6.02, float("nan"), 10.5, 47.8]], dtype=pl.List(pl.Float64)
+            ),
+        }
+    )
+
+    write_table_json(df, tmp_path / "data.json")
+
+    rows = json.loads((tmp_path / "data.json").read_text())
+    assert rows[0]["bbox"] == [6.02, None, 10.5, 47.8]

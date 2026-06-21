@@ -307,20 +307,35 @@ def _content_hash(content: str) -> str:
 
 
 def _prepare_df_for_write(df: pl.DataFrame) -> pl.DataFrame:
-    """Prepare DataFrame for writing: convert List columns to comma-separated strings
-    and NaN to null for valid JSON output."""
+    """Prepare DataFrame for writing for valid JSON output:
+
+    - List(Utf8) columns (e.g. ``*_ids``) -> comma-separated string;
+    - other List columns (numeric, e.g. ``bbox``) -> native JSON array, with NaN
+      inside float lists replaced by null;
+    - float columns -> NaN replaced by null.
+    """
     transforms: list[pl.Expr] = []
 
     for col_name in df.columns:
         col_type = df.schema[col_name]
         if isinstance(col_type, pl.List):
-            transforms.append(
-                pl.col(col_name)
-                .cast(pl.List(pl.Utf8))
-                .list.join(",")
-                .fill_null("")
-                .alias(col_name)
-            )
+            if col_type.inner == pl.Utf8:  # string lists (e.g. *_ids) -> CSV
+                transforms.append(
+                    pl.col(col_name)
+                    .cast(pl.List(pl.Utf8))
+                    .list.join(",")
+                    .fill_null("")
+                    .alias(col_name)
+                )
+            elif col_type.inner is not None and col_type.inner.is_float():
+                # numeric float lists (e.g. bbox) -> JSON array, NaN -> null
+                transforms.append(
+                    pl.col(col_name)
+                    .list.eval(pl.element().fill_nan(None))
+                    .alias(col_name)
+                )
+            else:  # numeric (integer) lists -> native JSON array
+                transforms.append(pl.col(col_name))
         elif col_type.is_float():
             transforms.append(pl.col(col_name).fill_nan(None))
         else:
