@@ -2284,6 +2284,24 @@ def test_numeric_list_written_as_json_array(tmp_path: Path):
     assert js_rows[1][1] == [6.02, 45.8, 10.5, 47.8]
 
 
+def test_integer_list_written_as_json_array(tmp_path: Path):
+    """Should write List(Int64) columns as JSON arrays, not CSV."""
+    from jsonjsdb.writer import write_table_json
+
+    df = pl.DataFrame(
+        {
+            "id": ["row-1"],
+            "years": pl.Series([[2020, 2021, 2022]], dtype=pl.List(pl.Int64)),
+        }
+    )
+
+    write_table_json(df, tmp_path / "data.json")
+
+    rows = json.loads((tmp_path / "data.json").read_text())
+    assert rows[0]["years"] == [2020, 2021, 2022]
+    assert all(isinstance(v, int) for v in rows[0]["years"])
+
+
 def test_string_list_still_written_as_csv(tmp_path: Path):
     """Should keep List(Utf8) columns (e.g. *_ids) as comma-separated strings."""
     from jsonjsdb.writer import write_table_json
