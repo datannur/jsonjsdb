@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+fix: Serialize numeric list columns (e.g. `bbox`) as native JSON arrays instead of comma-separated strings; `List(Utf8)` columns (e.g. `*_ids`) stay CSV-encoded. NaN inside float lists is written as `null`.
+
 ## 0.9.0
 
 add: `Table.get_many(ids)` to reconstruct only the requested rows instead of `all()`
