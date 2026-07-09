@@ -116,6 +116,24 @@ class Table(Generic[T]):
         self._flush()
         return self._df
 
+    @df.setter
+    def df(self, value: pl.DataFrame) -> None:
+        """Replace the whole frame, e.g. ``table.df = table.df.with_columns(...)``.
+
+        The getter flushes, so the frame handed to a transform already carries the
+        buffered rows. Assigning back replaces them: any row still buffered at that
+        point is dropped, exactly as it would be by ``_df = value`` without a buffer.
+        The storage schema is applied as it is on construction, so this cannot smuggle
+        a value past the typing that ``add()`` enforces.
+        """
+        # Cast before mutating: an invalid frame must leave the table untouched.
+        new_df = self._apply_storage_schema(value)
+        self._df = new_df
+        self._pending = []
+        self._pending_types = {}
+        self._pending_samples = {}
+        self._id_set = self._ids_from_df()
+
     @property
     def count(self) -> int:
         """Number of rows in the table."""
