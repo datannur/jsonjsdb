@@ -306,6 +306,34 @@ def _content_hash(content: str) -> str:
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _reject_commas_in_string_list(df: pl.DataFrame, col_name: str) -> None:
+    """A comma-separated column cannot represent a value containing a comma.
+
+    Splitting it back on read would silently turn one id into two, so refuse to
+    write it at all rather than corrupt the export.
+    """
+    offending = df.filter(
+        pl.col(col_name)
+        .list.eval(pl.element().str.contains(",", literal=True))
+        .list.any()
+    )
+    if offending.is_empty():
+        return
+
+    sample = offending[col_name][0].to_list()
+    raise ValueError(
+        f"Column '{col_name}' contains a value with a comma ({sample!r}) and "
+        f"cannot be stored: string list columns are written comma-separated"
+    )
+
+
+def validate_df_for_write(df: pl.DataFrame) -> None:
+    """Raise if df cannot be represented on disk, before any file is written."""
+    for col_name, col_type in df.schema.items():
+        if isinstance(col_type, pl.List) and col_type.inner == pl.Utf8:
+            _reject_commas_in_string_list(df, col_name)
+
+
 def _prepare_df_for_write(df: pl.DataFrame) -> pl.DataFrame:
     """Prepare DataFrame for writing for valid JSON output:
 
@@ -320,6 +348,7 @@ def _prepare_df_for_write(df: pl.DataFrame) -> pl.DataFrame:
         col_type = df.schema[col_name]
         if isinstance(col_type, pl.List):
             if col_type.inner == pl.Utf8:  # string lists (e.g. *_ids) -> CSV
+                _reject_commas_in_string_list(df, col_name)
                 transforms.append(
                     pl.col(col_name)
                     .cast(pl.List(pl.Utf8))

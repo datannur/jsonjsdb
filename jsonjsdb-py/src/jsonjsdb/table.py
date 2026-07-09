@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import types
 from typing import (
     TYPE_CHECKING,
@@ -43,6 +44,12 @@ class Table(Generic[T]):
 
     Use runtime_fields to specify columns that should exist in memory
     but never be persisted to JSON files.
+
+    Appended rows are buffered in ``_pending`` and materialized into ``_df`` by a
+    single concat on the next read or non-append mutation, which keeps repeated
+    ``add``/``add_all`` calls linear instead of quadratic. Every method that is
+    not a pure append calls ``_flush()`` first, so buffering is invisible to
+    callers.
     """
 
     runtime_fields: set[str] = set()
@@ -62,6 +69,10 @@ class Table(Generic[T]):
         self._storage_schema = _storage_schema_from_entity_type(entity_type)
         if self._storage_schema:
             self._df = self._apply_storage_schema(self._df)
+        self._pending: list[dict[str, Any]] = []
+        self._id_set: set[str] = self._ids_from_df()
+        self._pending_types: dict[str, type] = {}
+        self._pending_samples: dict[str, Any] = {}
         if runtime_fields is not None:
             self.runtime_fields = runtime_fields
         elif type(self).runtime_fields is not Table.runtime_fields:
@@ -69,26 +80,57 @@ class Table(Generic[T]):
         else:
             self.runtime_fields = set()
 
+    def _ids_from_df(self) -> set[str]:
+        if self._df.is_empty() or "id" not in self._df.columns:
+            return set()
+        return {str(value) for value in self._df["id"].to_list()}
+
+    def _flush(self) -> None:
+        """Materialize buffered appends into _df with a single concat.
+
+        _pending is cleared only once the concat has succeeded, so a flush that
+        somehow raises leaves the table readable rather than dropping the buffer
+        while _id_set still claims those ids exist.
+        """
+        if not self._pending:
+            return
+
+        new_df = self._apply_storage_schema(
+            pl.DataFrame(self._pending, infer_schema_length=None)
+        )
+
+        if self._df.is_empty():
+            self._df = new_df
+        else:
+            self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
+        self._pending = []
+        self._pending_types = {}
+        self._pending_samples = {}
+
     @property
     def name(self) -> str:
         return self._name
 
     @property
     def df(self) -> pl.DataFrame:
+        self._flush()
         return self._df
 
     @property
     def count(self) -> int:
         """Number of rows in the table."""
+        self._flush()
         return self._df.height
 
     @property
     def is_empty(self) -> bool:
         """Whether the table has no rows."""
+        self._flush()
         return self._df.is_empty()
 
     def get_persistable_df(self) -> pl.DataFrame:
         """Return DataFrame with runtime_fields columns excluded."""
+        self._flush()
         if not self.runtime_fields:
             return self._df
 
@@ -113,6 +155,7 @@ class Table(Generic[T]):
 
     def get(self, id: ID) -> T | None:
         """Get a single row by ID, or None if not found."""
+        self._flush()
         if self._df.is_empty() or "id" not in self._df.columns:
             return None
         result = self._df.filter(pl.col("id") == id)
@@ -122,6 +165,7 @@ class Table(Generic[T]):
 
     def exists(self, id: ID) -> bool:
         """Check if a row with the given ID exists."""
+        self._flush()
         if self._df.is_empty() or "id" not in self._df.columns:
             return False
         return not self._df.filter(pl.col("id") == id).is_empty()
@@ -138,6 +182,7 @@ class Table(Generic[T]):
         IDs that are not present are simply absent from the result; the order of
         the result follows the table, not ``ids``.
         """
+        self._flush()
         if self._df.is_empty() or "id" not in self._df.columns:
             return []
         sub = self._df.filter(pl.col("id").is_in(ids))
@@ -145,6 +190,7 @@ class Table(Generic[T]):
 
     def all(self) -> list[T]:
         """Get all rows as a list of entities."""
+        self._flush()
         return [self._row_to_entity(row) for row in self._df.iter_rows(named=True)]
 
     @overload
@@ -158,6 +204,7 @@ class Table(Generic[T]):
 
         Operators: ==, !=, >, >=, <, <=, in, is_null, is_not_null
         """
+        self._flush()
         if self._df.is_empty() or column not in self._df.columns:
             return []
         col = pl.col(column)
@@ -192,6 +239,7 @@ class Table(Generic[T]):
 
         More efficient than [x.id for x in table.where(...)] when only IDs are needed.
         """
+        self._flush()
         if self._df.is_empty() or column not in self._df.columns:
             return []
         col = pl.col(column)
@@ -244,19 +292,14 @@ class Table(Generic[T]):
             raise ValueError("Row must have an 'id' field")
 
         row_id = str(row_dict["id"])
-        if (
-            not self._df.is_empty()
-            and not self._df.filter(pl.col("id") == row_id).is_empty()
-        ):
+        if row_id in self._id_set:
             raise ValueError(f"Row with id '{row_id}' already exists")
 
         prepared = self._prepare_row_for_storage(row_dict)
-        new_df = self._apply_storage_schema(pl.DataFrame([prepared]))
+        self._validate_rows_for_storage([prepared])
 
-        if self._df.is_empty():
-            self._df = new_df
-        else:
-            self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
+        self._pending.append(prepared)
+        self._id_set.add(row_id)
 
     def upsert(self, row: T) -> bool:
         """Add or update a row. Returns True if added, False if updated."""
@@ -265,12 +308,14 @@ class Table(Generic[T]):
             raise ValueError("Row must have an 'id' field")
 
         row_id = str(row_dict["id"])
-        if self.exists(row_id):
-            self.update(row_id, **{k: v for k, v in row_dict.items() if k != "id"})
-            return False
-        else:
+        # _id_set covers _df and _pending, so absence is decisive: insert-only
+        # upsert loops stay buffered instead of flushing on every call.
+        if row_id not in self._id_set:
             self.add(row)
             return True
+
+        self.update(row_id, **{k: v for k, v in row_dict.items() if k != "id"})
+        return False
 
     def add_all(self, rows: list[T]) -> None:
         """Add multiple rows in a single batch operation."""
@@ -287,21 +332,15 @@ class Table(Generic[T]):
         if len(new_ids) != len(dicts):
             raise ValueError("Duplicate IDs in rows to add")
 
-        if not self._df.is_empty():
-            existing = set(self._df["id"].to_list())
-            conflicts = new_ids & existing
-            if conflicts:
-                raise ValueError(f"IDs already exist: {conflicts}")
+        conflicts = new_ids & self._id_set
+        if conflicts:
+            raise ValueError(f"IDs already exist: {conflicts}")
 
         prepared = [self._prepare_row_for_storage(d) for d in dicts]
-        new_df = self._apply_storage_schema(
-            pl.DataFrame(prepared, infer_schema_length=None)
-        )
+        self._validate_rows_for_storage(prepared)
 
-        if self._df.is_empty():
-            self._df = new_df
-        else:
-            self._df = pl.concat([self._df, new_df], how="diagonal_relaxed")
+        self._pending.extend(prepared)
+        self._id_set |= new_ids
 
     def upsert_all(self, rows: list[T]) -> None:
         """Insert-or-replace multiple rows in a single rebuild.
@@ -329,17 +368,20 @@ class Table(Generic[T]):
         if len(set(incoming_ids)) != len(incoming_ids):
             raise ValueError("Duplicate IDs in rows to upsert")
 
+        self._flush()
         prepared = [self._prepare_row_for_storage(d) for d in dicts]
         new_df = self._apply_storage_schema(
             pl.DataFrame(prepared, infer_schema_length=None)
         )
+        already_present = self._id_set & set(incoming_ids)
+        self._id_set |= set(incoming_ids)
 
         if self._df.is_empty():
             self._df = new_df
             return
 
         # Add any columns introduced by the batch so update() keeps them
-        # (update with how="full" only retains columns present on the left).
+        # (update only retains columns present on the left).
         base = self._df
         new_columns = [c for c in new_df.columns if c not in base.columns]
         if new_columns:
@@ -347,12 +389,22 @@ class Table(Generic[T]):
                 pl.lit(None).cast(new_df.schema[c]).alias(c) for c in new_columns
             )
 
-        self._df = base.update(  # type: ignore[attr-defined]
-            new_df, on="id", how="full", include_nulls=True
+        # Replace in place, then append the new ids in batch order. update(how="full")
+        # would do both at once, but it appends its right-only rows in join order,
+        # which is not deterministic — and row order reaches save() and its hashes.
+        replaced = base.update(  # type: ignore[attr-defined]
+            new_df, on="id", how="left", include_nulls=True
+        )
+        inserted = new_df.filter(~pl.col("id").is_in(list(already_present)))
+        self._df = (
+            replaced
+            if inserted.is_empty()
+            else pl.concat([replaced, inserted], how="diagonal_relaxed")
         )
 
     def update(self, id: ID, **kwargs: Any) -> None:
         """Update a row by ID. Raises KeyError if not found."""
+        self._flush()
         if self._df.is_empty() or self._df.filter(pl.col("id") == id).is_empty():
             raise KeyError(f"Row with id '{id}' not found")
 
@@ -369,10 +421,13 @@ class Table(Generic[T]):
             else:
                 updates.append(pl.col(col_name))
 
+        # No _id_set upkeep: the `id` positional shadows any `id=` kwarg, so
+        # update() cannot rename a row. update_many() can, and does resync.
         self._df = self._apply_storage_schema(self._df.select(updates), set(kwargs))
 
     def update_many(self, ids: list[ID], **kwargs: Any) -> int:
         """Update multiple rows by ID. Returns count of updated rows."""
+        self._flush()
         if self._df.is_empty():
             return 0
 
@@ -395,24 +450,30 @@ class Table(Generic[T]):
                 updates.append(pl.col(col_name))
 
         self._df = self._apply_storage_schema(self._df.select(updates), set(kwargs))
+        if "id" in kwargs:
+            self._id_set = self._ids_from_df()
         return count
 
     def remove(self, id: ID) -> bool:
         """Remove a row by ID. Returns True if removed, False if not found."""
+        self._flush()
         if self._df.is_empty():
             return False
 
         original_len = len(self._df)
         self._df = self._df.filter(pl.col("id") != id)
+        self._id_set = self._ids_from_df()
         return len(self._df) < original_len
 
     def remove_all(self, ids: list[ID]) -> int:
         """Remove multiple rows by ID. Returns count of removed rows."""
+        self._flush()
         if self._df.is_empty():
             return 0
 
         original_len = len(self._df)
         self._df = self._df.filter(~pl.col("id").is_in(ids))
+        self._id_set = self._ids_from_df()
         return original_len - len(self._df)
 
     def remove_where(self, column: str, op: Operator, value: Any = None) -> int:
@@ -434,11 +495,71 @@ class Table(Generic[T]):
                 prepared[key] = value
         return prepared
 
+    def _validate_rows_for_storage(self, rows: list[dict[str, Any]]) -> None:
+        """Reject rows that _flush() could not materialize, on the offending call.
+
+        A buffered append builds no DataFrame, so the two checks flush would make
+        are run here instead: the scalar cast guard of _validate_storage_cast, and
+        polars' own type reconciliation. The latter is probed only when a column
+        sees a new Python type, which costs nothing on homogeneous rows.
+
+        Tracking state is committed only once every row passes, so a row rejected
+        on its second column cannot leave a sample behind from its first.
+        """
+        types = dict(self._pending_types)
+        samples = dict(self._pending_samples)
+
+        for row in rows:
+            for col_name, value in row.items():
+                if value is None:
+                    continue
+                self._validate_scalar_cast(col_name, value)
+                if types.get(col_name) is not type(value):
+                    self._probe_column_type(col_name, value, samples.get(col_name))
+                    types[col_name] = type(value)
+                    samples[col_name] = value
+
+        self._pending_types = types
+        self._pending_samples = samples
+
+    def _validate_scalar_cast(self, col_name: str, value: Any) -> None:
+        target_dtype = self._storage_schema.get(col_name)
+        if target_dtype is None or not _dtype_is_integer(target_dtype):
+            return
+        if isinstance(value, bool) or not isinstance(value, float):
+            return
+        if math.isnan(value) or not value.is_integer():
+            raise ValueError(
+                f"Column '{col_name}' contains non-integer values and cannot "
+                f"be stored as {target_dtype}"
+            )
+
+    def _probe_column_type(self, col_name: str, value: Any, previous: Any) -> None:
+        """Raise if polars could not reconcile `value` with the column.
+
+        Replays flush's two steps on a one-column, at-most-two-row frame rather
+        than reimplementing polars' supertype rules: pl.DataFrame() covers the
+        conflict against a sample already buffered, pl.concat() the conflict
+        against the dtype already stored in _df.
+        """
+        rows = [] if previous is None else [{col_name: previous}]
+        rows.append({col_name: value})
+        probe = pl.DataFrame(rows, infer_schema_length=None)
+
+        # An empty _df is replaced wholesale by _flush(), schema included, so its
+        # columns must not constrain the probe — a zero-row frame keeps its dtypes.
+        if not self._df.is_empty() and col_name in self._df.columns:
+            pl.concat(
+                [self._df.head(0).select(col_name), probe], how="diagonal_relaxed"
+            )
+
     def set_entity_type(self, entity_type: type[T] | None) -> None:
+        self._flush()
         self._entity_type = entity_type
         self._storage_schema = _storage_schema_from_entity_type(entity_type)
         if self._storage_schema:
             self._df = self._apply_storage_schema(self._df)
+            self._id_set = self._ids_from_df()
 
     def _apply_storage_schema(
         self, df: pl.DataFrame, column_names: set[str] | None = None
@@ -476,6 +597,9 @@ def _storage_schema_from_entity_type(
 
 
 def _validate_storage_cast(df: pl.DataFrame, col_name: str, target_dtype: Any) -> None:
+    """Column-level cast guard. Table._validate_scalar_cast mirrors this rule on
+    single values so buffered appends still raise on the offending call; keep the
+    two in step."""
     source_dtype = df.schema[col_name]
     if not (_dtype_is_integer(target_dtype) and _dtype_is_float(source_dtype)):
         return

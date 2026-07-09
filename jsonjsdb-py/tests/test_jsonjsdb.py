@@ -2358,3 +2358,548 @@ def test_nan_in_numeric_list_becomes_null(tmp_path: Path):
 
     rows = json.loads((tmp_path / "data.json").read_text())
     assert rows[0]["bbox"] == [6.02, None, 10.5, 47.8]
+
+
+# --- Buffered appends ---
+
+
+def test_buffered_adds_are_materialized_in_a_single_chunk():
+    """N appends on a fresh table must concat once, not once per row."""
+    table: Table[dict] = Table("t")
+    for i in range(500):
+        table.add({"id": f"i{i}", "v": i})
+
+    assert table.count == 500
+    assert table.df.n_chunks() == 1
+
+
+def test_read_after_write_sees_buffered_rows():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "v": 1})
+    table.add_all([{"id": "b", "v": 2}, {"id": "c", "v": 3}])
+
+    assert table.count == 3
+    assert not table.is_empty
+    assert table.get("b") == {"id": "b", "v": 2}
+    assert table.exists("c")
+    assert [r["id"] for r in table.all()] == ["a", "b", "c"]
+    assert table.ids_where("v", ">", 1) == ["b", "c"]
+    assert table.get_by("v", 3) == {"id": "c", "v": 3}
+    assert table.get_many(["a", "c"]) == [{"id": "a", "v": 1}, {"id": "c", "v": 3}]
+
+
+def test_buffered_duplicate_id_raises_immediately():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a"})
+
+    with pytest.raises(ValueError, match="already exists"):
+        table.add({"id": "a"})
+    with pytest.raises(ValueError, match="IDs already exist"):
+        table.add_all([{"id": "a"}])
+
+
+def test_insertion_order_preserved_across_flush_boundary():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a"})
+    table.add({"id": "b"})
+    table.get("a")  # forces a flush mid-stream
+    table.add({"id": "c"})
+    table.add_all([{"id": "d"}, {"id": "e"}])
+
+    assert [r["id"] for r in table.all()] == ["a", "b", "c", "d", "e"]
+
+
+def test_mutations_interleaved_with_buffered_adds():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "v": 1})
+    table.add({"id": "b", "v": 2})
+
+    assert table.remove("a") is True  # removes a still-buffered row
+    table.add({"id": "c", "v": 3})
+    table.update("b", v=20)
+
+    assert [(r["id"], r["v"]) for r in table.all()] == [("b", 20), ("c", 3)]
+    assert table.count == 2
+
+    table.add({"id": "a", "v": 1})  # id is free again after removal
+    assert table.exists("a")
+
+
+def test_upsert_replaces_a_buffered_row():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "v": 1})
+
+    assert table.upsert({"id": "a", "v": 2}) is False
+    assert table.get("a") == {"id": "a", "v": 2}
+    assert table.count == 1
+
+
+def test_get_persistable_df_flushes_pending_rows():
+    table: Table[dict] = Table("t", runtime_fields={"tmp"})
+    table.add({"id": "a", "keep": 1, "tmp": 9})
+
+    persistable = table.get_persistable_df()
+    assert persistable.columns == ["id", "keep"]
+    assert persistable.height == 1
+
+
+def test_save_flushes_buffered_rows_without_a_prior_read(tmp_path: Path):
+    class ItemDB(Jsonjsdb):
+        item: Table[dict]
+
+    db = ItemDB()
+    db.item.add_all([{"id": f"i{i}", "n": i} for i in range(3)])
+    db.save(tmp_path)
+
+    reloaded = ItemDB(tmp_path)
+    assert [r["id"] for r in reloaded.item.all()] == ["i0", "i1", "i2"]
+
+
+def test_typed_integer_field_rejects_non_integral_float_in_add_all():
+    """Eager scalar validation: the offending call raises, not a later read."""
+
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    with pytest.raises(ValueError, match="non-integer values"):
+        db.metric.add_all(
+            [
+                {"id": "row-1", "count": 1},
+                {"id": "row-2", "count": 392.5},  # type: ignore[typeddict-item]
+            ]
+        )
+
+    assert db.metric.count == 0  # the whole batch is rejected, nothing buffered
+    assert not db.metric.exists("row-1")
+
+
+def test_typed_integer_field_accepts_integral_float_and_null():
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    db.metric.add({"id": "row-1", "count": 3.0})  # type: ignore[typeddict-item]
+    db.metric.add({"id": "row-2", "count": None})
+
+    assert db.metric.df.schema["count"] == pl.Int64
+    assert db.metric.get("row-1") == {"id": "row-1", "count": 3}
+    assert db.metric.get("row-2") == {"id": "row-2", "count": None}
+
+
+def test_count_matches_row_count_when_df_has_duplicate_ids():
+    """count must not be derived from the id set: loaded ids need not be unique."""
+    table: Table[dict] = Table("t", df=pl.DataFrame({"id": ["a", "a", "b"]}))
+
+    assert table.count == 3
+    assert len(table.all()) == 3
+
+
+def test_exists_and_get_work_on_a_non_utf8_id_column():
+    table: Table[dict] = Table("t", df=pl.DataFrame({"id": [1, 2], "v": ["x", "y"]}))
+    numeric_id = cast(str, 1)  # ID is str, but a loaded df may hold integer ids
+
+    assert table.exists(numeric_id) is True
+    assert table.get(numeric_id) == {"id": 1, "v": "x"}
+
+
+def test_update_cannot_rename_an_id():
+    """The `id` positional shadows an `id=` kwarg, so update() never renames."""
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "v": 1})
+
+    with pytest.raises(TypeError, match="multiple values for argument 'id'"):
+        table.update("a", id="b")  # type: ignore[misc]
+
+
+def test_update_many_that_renames_ids_keeps_uniqueness_tracking_in_sync():
+    table: Table[dict] = Table("t")
+    table.add_all([{"id": "a", "v": 1}, {"id": "b", "v": 2}])
+
+    assert table.update_many(["a"], id="z") == 1
+    assert not table.exists("a")
+    assert table.exists("z")
+
+    table.add({"id": "a", "v": 3})  # the old id is free again
+    with pytest.raises(ValueError, match="already exists"):
+        table.add({"id": "z", "v": 4})
+
+
+def test_irreconcilable_row_raises_on_add_and_leaves_the_table_usable():
+    """The buffer must not turn a rejected row into an unreadable table."""
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "x": 1})
+
+    with pytest.raises(pl.exceptions.SchemaError):
+        table.add({"id": "b", "x": [1, 2]})  # int vs list[int]: no supertype
+
+    assert [r["id"] for r in table.all()] == ["a"]
+    assert table.count == 1
+    assert not table.exists("b")
+    table.add({"id": "b", "x": 2})  # the id was never taken
+
+
+def test_irreconcilable_row_raises_against_an_already_stored_column():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "x": 1})
+    table.all()  # flush: x is now an Int64 column of _df
+
+    with pytest.raises(pl.exceptions.SchemaError):
+        table.add({"id": "b", "x": [1, 2]})
+    assert table.count == 1
+
+
+def test_rejected_row_leaves_no_sample_behind_for_later_appends():
+    """A row rejected on its 2nd column must not poison the 1st column's type."""
+
+    class Metric(TypedDict):
+        id: str
+        tags: list[str]
+        count: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    with pytest.raises(ValueError, match="non-integer values"):
+        db.metric.add({"id": "a", "tags": ["x"], "count": 392.5})  # type: ignore[typeddict-item]
+
+    # 'tags' saw a list before the row was rejected; a str must still be accepted
+    db.metric.add({"id": "b", "tags": "x", "count": 1})  # type: ignore[typeddict-item]
+    assert db.metric.count == 1
+
+
+def test_column_type_widening_is_still_accepted():
+    table: Table[dict] = Table("t")
+    table.add_all([{"id": "a", "x": 1}, {"id": "b", "x": 1.5}, {"id": "c", "x": "s"}])
+
+    assert table.df.schema["x"] == pl.String
+    assert [r["x"] for r in table.all()] == ["1", "1.5", "s"]
+
+
+def test_insert_only_upsert_loop_stays_buffered():
+    table: Table[dict] = Table("t")
+    for i in range(500):
+        assert table.upsert({"id": f"i{i}", "v": i}) is True
+
+    assert table.count == 500
+    assert table.df.n_chunks() == 1
+
+
+def test_upsert_updates_a_row_that_is_still_buffered():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "v": 1})
+
+    assert table.upsert({"id": "a", "v": 2}) is False
+    assert table.get("a") == {"id": "a", "v": 2}
+    assert table.count == 1
+
+
+def test_upsert_all_appends_new_ids_in_batch_order_deterministically():
+    """Row order reaches save() and its hashes, so it must not depend on a join."""
+    orders = set()
+    for _ in range(20):
+        table: Table[dict] = Table("t")
+        table.add_all(
+            [{"id": "i4", "v": 1}, {"id": "i5", "v": 2}, {"id": "i2", "v": 3}]
+        )
+        table.all()  # flush, so upsert_all replaces against a stored frame
+        table.upsert_all(
+            [{"id": "i2", "v": 7}, {"id": "i3", "v": 99}, {"id": "i1", "v": 98}]
+        )
+        orders.add(tuple(r["id"] for r in table.all()))
+
+    assert orders == {("i4", "i5", "i2", "i3", "i1")}
+
+
+def test_upsert_all_preserves_runtime_fields_on_replaced_rows():
+    table: Table[dict] = Table("t", runtime_fields={"rt"})
+    table.add_all([{"id": "a", "v": 1, "rt": 10}, {"id": "b", "v": 2, "rt": 20}])
+
+    table.upsert_all([{"id": "b", "v": 9}, {"id": "c", "v": 3}])
+
+    assert table.get("b") == {"id": "b", "v": 9, "rt": 20}
+    assert table.get("c") == {"id": "c", "v": 3, "rt": None}
+
+
+# --- Buffering must be invisible: differential test against an eagerly flushed table ---
+
+_DIFF_READS = [
+    ("count", lambda t: t.count),
+    ("is_empty", lambda t: t.is_empty),
+    ("all", lambda t: t.all()),
+    ("shape", lambda t: t.df.shape),
+    ("schema", lambda t: str(t.df.schema)),
+    ("persistable", lambda t: t.get_persistable_df().shape),
+]
+
+
+def _outcome(fn):
+    """Return the value, or the exception type, so both are compared."""
+    try:
+        return ("ok", fn())
+    except Exception as exc:
+        return ("raised", type(exc).__name__)
+
+
+def _random_row(rng, ids):
+    row: dict = {"id": rng.choice(ids)}
+    if rng.random() < 0.85:
+        row["n"] = rng.choice([1, 2, 1.5, None])
+    if rng.random() < 0.5:
+        row["s"] = rng.choice(["a", "b", None])
+    if rng.random() < 0.1:
+        row["n"] = [1, 2]  # irreconcilable with an int column
+    if rng.random() < 0.3:
+        row["extra"] = rng.randint(0, 5)
+    return row
+
+
+def _random_op(rng, ids):
+    """Build the op eagerly: both tables must receive the very same rows."""
+    r = rng.random()
+    if r < 0.30:
+        row = _random_row(rng, ids)
+        return lambda t: t.add(dict(row))
+    if r < 0.42:
+        rows = [_random_row(rng, ids) for _ in range(rng.randint(1, 3))]
+        return lambda t: t.add_all([dict(row) for row in rows])
+    if r < 0.54:
+        row = _random_row(rng, ids)
+        return lambda t: t.upsert(dict(row))
+    if r < 0.62:
+        rows = [_random_row(rng, ids) for _ in range(rng.randint(1, 2))]
+        return lambda t: t.upsert_all([dict(row) for row in rows])
+    if r < 0.70:
+        i, n = rng.choice(ids), rng.randint(0, 9)
+        return lambda t: t.update(i, n=n)
+    if r < 0.76:
+        sample = rng.sample(ids, 2)
+        return lambda t: t.update_many(sample, s="z")
+    if r < 0.82:
+        i = rng.choice(ids)
+        return lambda t: t.remove(i)
+    if r < 0.86:
+        sample = rng.sample(ids, 2)
+        return lambda t: t.remove_all(sample)
+    if r < 0.90:
+        return lambda t: t.remove_where("n", "==", 1)
+    if r < 0.94:
+        i = rng.choice(ids)
+        return lambda t: t.get(i)
+    if r < 0.97:
+        return lambda t: t.where("n", ">", 0)
+    return lambda t: t.ids_where("s", "==", "a")
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_buffering_is_invisible_on_random_operation_sequences(seed: int):
+    """A buffered table must be indistinguishable from one flushed after every write.
+
+    At most one read runs per step, rotating, and only sometimes: a read that
+    forgets to flush must be the first to touch the table after a write, and
+    writes must be able to pile up so the next op meets a non-empty buffer.
+    """
+    import random
+
+    rng = random.Random(seed)
+    ids = [f"i{k}" for k in range(6)]
+    buffered: Table[dict] = Table("buffered")
+    reference: Table[dict] = Table("reference")
+
+    for step in range(40):
+        op = _random_op(rng, ids)
+        assert _outcome(lambda: op(buffered)) == _outcome(lambda: op(reference))
+        reference._flush()  # the reference never carries a buffer
+
+        if rng.random() < 0.5:  # otherwise let the buffer accumulate
+            name, read = _DIFF_READS[step % len(_DIFF_READS)]
+            got = _outcome(lambda: read(buffered))
+            expected = _outcome(lambda: read(reference))
+            assert got == expected, f"{name} diverged at step {step}"
+
+    assert _outcome(lambda: buffered.df.to_dicts()) == _outcome(
+        lambda: reference.df.to_dicts()
+    )
+
+
+def test_probe_ignores_the_schema_of_an_emptied_table():
+    """_flush() replaces an empty _df wholesale, so its dtypes must not constrain add()."""
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "n": [1, 2]})
+    assert table.remove("a") is True
+    assert table.is_empty
+    assert table.df.schema["n"] == pl.List(pl.Int64)  # zero rows, dtype retained
+
+    table.add({"id": "b", "n": 2})  # would clash with List(Int64) if _df constrained it
+
+    assert table.get("b") == {"id": "b", "n": 2}
+    assert table.df.schema["n"] == pl.Int64
+
+
+# --- save -> reload -> save must be deterministic, idempotent, buffer-agnostic ---
+
+_SAVE_TIMESTAMP = 1_700_000_000
+
+
+class _ItemDB(Jsonjsdb):
+    item: Table[dict]
+
+
+def _snapshot(path: Path) -> dict[str, str]:
+    """Every written file -> its content hash."""
+    return {
+        str(p.relative_to(path)): file_hash(p)
+        for p in sorted(path.rglob("*"))
+        if p.is_file()
+    }
+
+
+def _saved_snapshot(rows: list[dict], path: Path, *, buffered: bool) -> dict[str, str]:
+    db = _ItemDB()
+    db.item.add_all([dict(r) for r in rows])
+    if not buffered:
+        db.item.all()  # materialize before saving
+    db.save(path, timestamp=_SAVE_TIMESTAMP)
+    return _snapshot(path)
+
+
+_ROUNDTRIP_CASES = [
+    ("scalars", [{"id": "a", "n": 1, "s": "x", "f": 1.5, "b": True}]),
+    ("nulls", [{"id": "a", "n": None, "s": None}, {"id": "b", "n": 2, "s": "y"}]),
+    ("ids_list", [{"id": "a", "tag_ids": ["t1", "t2"]}, {"id": "b", "tag_ids": []}]),
+    ("ids_null", [{"id": "a", "tag_ids": None}]),
+    ("float_list", [{"id": "a", "bbox": [1.5, 2.5]}]),
+    ("int_list", [{"id": "a", "dims": [1, 2]}]),
+    ("empty_string", [{"id": "a", "s": ""}]),
+    ("unicode", [{"id": "a", "s": "héllo → ✓"}]),
+    ("numeric_looking_string", [{"id": "a", "s": "0123"}]),
+]
+
+_roundtrip = pytest.mark.parametrize(
+    "rows", [c[1] for c in _ROUNDTRIP_CASES], ids=[c[0] for c in _ROUNDTRIP_CASES]
+)
+
+
+@_roundtrip
+def test_save_is_deterministic(rows: list[dict], tmp_path: Path):
+    assert _saved_snapshot(rows, tmp_path / "a", buffered=True) == _saved_snapshot(
+        rows, tmp_path / "b", buffered=True
+    )
+
+
+@_roundtrip
+def test_save_does_not_depend_on_whether_rows_were_buffered(
+    rows: list[dict], tmp_path: Path
+):
+    assert _saved_snapshot(rows, tmp_path / "a", buffered=True) == _saved_snapshot(
+        rows, tmp_path / "b", buffered=False
+    )
+
+
+@_roundtrip
+def test_reloading_and_saving_again_rewrites_the_same_files(
+    rows: list[dict], tmp_path: Path
+):
+    """A scan that produced the same data must not churn the exported files."""
+    first = _saved_snapshot(rows, tmp_path / "a", buffered=True)
+
+    reloaded = _ItemDB(tmp_path / "a")
+    reloaded.save(tmp_path / "b", timestamp=_SAVE_TIMESTAMP)
+
+    assert _snapshot(tmp_path / "b") == first
+
+
+@_roundtrip
+def test_reloading_preserves_row_content(rows: list[dict], tmp_path: Path):
+    original = _ItemDB()
+    original.item.add_all([dict(r) for r in rows])
+    expected = original.item.all()
+    original.save(tmp_path, timestamp=_SAVE_TIMESTAMP)
+
+    assert _ItemDB(tmp_path).item.all() == expected
+
+
+def test_saving_an_id_containing_a_comma_raises(tmp_path: Path):
+    """The CSV encoding cannot represent it; refuse rather than split it on read."""
+    db = _ItemDB()
+    db.item.add_all([{"id": "a", "tag_ids": ["x,y", "z"]}])
+
+    with pytest.raises(ValueError, match="tag_ids.*comma"):
+        db.save(tmp_path, timestamp=_SAVE_TIMESTAMP)
+
+
+def test_saving_string_lists_without_commas_is_unaffected(tmp_path: Path):
+    db = _ItemDB()
+    db.item.add_all(
+        [
+            {"id": "a", "tag_ids": ["t1", "t2"]},
+            {"id": "b", "tag_ids": []},
+            {"id": "c", "tag_ids": None},
+        ]
+    )
+    db.save(tmp_path, timestamp=_SAVE_TIMESTAMP)
+
+    reloaded = _ItemDB(tmp_path).item
+    assert reloaded.get("a") == {"id": "a", "tag_ids": ["t1", "t2"]}
+    assert reloaded.get("b") == {"id": "b", "tag_ids": []}
+    assert reloaded.get("c") == {"id": "c", "tag_ids": []}
+
+
+def test_comma_rejection_reports_the_column_and_the_offending_value(tmp_path: Path):
+    from jsonjsdb.writer import write_table_json
+
+    df = pl.DataFrame(
+        {
+            "id": ["r1", "r2"],
+            "tag_ids": pl.Series([["ok"], ["x,y", None]], dtype=pl.List(pl.Utf8)),
+        }
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        write_table_json(df, tmp_path / "data.json")
+
+    message = str(excinfo.value)
+    assert "tag_ids" in message
+    assert "x,y" in message  # the offending row, not the clean one
+    assert not (tmp_path / "data.json").exists()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="every string list is written comma-separated but only *_ids is split "
+    "back, so a plain list column reloads as a string. Stable and idempotent, but "
+    "only a change to the output format could fix it. Delete this marker if it does.",
+)
+def test_reloading_preserves_a_string_list_column_not_named_ids(tmp_path: Path):
+    db = _ItemDB()
+    db.item.add_all([{"id": "a", "tags": ["p", "q"]}])
+    db.save(tmp_path, timestamp=_SAVE_TIMESTAMP)
+
+    assert _ItemDB(tmp_path).item.get("a") == {"id": "a", "tags": ["p", "q"]}
+
+
+def test_an_unwritable_table_aborts_the_save_before_any_file_is_written(
+    tmp_path: Path,
+):
+    class TwoTableDB(Jsonjsdb):
+        aaa: Table[dict]
+        zzz: Table[dict]
+
+    db = TwoTableDB()
+    db.aaa.add({"id": "a", "v": 1})
+    db.zzz.add({"id": "b", "tag_ids": ["x,y"]})
+    target = tmp_path / "export"
+
+    with pytest.raises(ValueError, match="comma"):
+        db.save(target, timestamp=_SAVE_TIMESTAMP)
+
+    assert not target.exists()  # aaa.json must not survive zzz's rejection
