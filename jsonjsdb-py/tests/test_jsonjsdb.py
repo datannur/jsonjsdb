@@ -2690,12 +2690,18 @@ def _random_op(rng, ids):
     if r < 0.86:
         sample = rng.sample(ids, 2)
         return lambda t: t.remove_all(sample)
-    if r < 0.90:
+    if r < 0.88:
         return lambda t: t.remove_where("n", "==", 1)
+    if r < 0.91:  # whole-frame replacement through the public setter
+        i = rng.choice(ids)
+        return lambda t: setattr(t, "df", t.df.filter(pl.col("id") != i))
     if r < 0.94:
+        k = rng.randint(0, 9)
+        return lambda t: setattr(t, "df", t.df.with_columns(extra=pl.lit(k)))
+    if r < 0.96:
         i = rng.choice(ids)
         return lambda t: t.get(i)
-    if r < 0.97:
+    if r < 0.98:
         return lambda t: t.where("n", ">", 0)
     return lambda t: t.ids_where("s", "==", "a")
 
@@ -2903,3 +2909,110 @@ def test_an_unwritable_table_aborts_the_save_before_any_file_is_written(
         db.save(target, timestamp=_SAVE_TIMESTAMP)
 
     assert not target.exists()  # aaa.json must not survive zzz's rejection
+
+
+# --- Whole-frame replacement: table.df = f(table.df) ---
+
+
+def test_df_setter_transform_sees_buffered_rows():
+    """The getter flushes, so f() is handed the rows added just before."""
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "v": 1})
+    table.add({"id": "b", "v": 2})
+
+    table.df = table.df.with_columns(doubled=pl.col("v") * 2)
+
+    assert table.all() == [
+        {"id": "a", "v": 1, "doubled": 2},
+        {"id": "b", "v": 2, "doubled": 4},
+    ]
+
+
+def test_df_setter_rebuilds_the_id_index():
+    table: Table[dict] = Table("t")
+    table.add_all([{"id": "a"}, {"id": "b"}])
+
+    table.df = table.df.filter(pl.col("id") != "a")
+
+    assert not table.exists("a")
+    assert table.count == 1
+    table.add({"id": "a"})  # the dropped id is free again
+    with pytest.raises(ValueError, match="already exists"):
+        table.add({"id": "b"})  # a surviving id is still taken
+
+
+def test_df_setter_picks_up_ids_introduced_by_the_transform():
+    table: Table[dict] = Table("t")
+    table.add({"id": "a"})
+
+    table.df = pl.concat([table.df, pl.DataFrame({"id": ["grafted"]})])
+
+    assert table.exists("grafted")
+    with pytest.raises(ValueError, match="already exists"):
+        table.add({"id": "grafted"})
+
+
+def test_df_setter_clears_the_buffered_type_samples():
+    """A sample left over from a dropped column would falsely reject a later add."""
+    table: Table[dict] = Table("t")
+    table.add({"id": "a", "x": 1})  # 'x' sampled as int, still buffered
+
+    table.df = pl.DataFrame({"id": ["z"]})  # 'x' no longer exists anywhere
+
+    table.add({"id": "b", "x": [1, 2]})  # must not clash with the stale int sample
+    assert table.get("b") == {"id": "b", "x": [1, 2]}
+
+
+def test_df_setter_replaces_rows_that_were_still_buffered():
+    table: Table[dict] = Table("t")
+    table.add({"id": "buffered"})
+
+    table.df = pl.DataFrame({"id": ["fresh"]})
+
+    assert [r["id"] for r in table.all()] == ["fresh"]
+    assert table.count == 1
+
+
+def test_df_setter_applies_the_storage_schema():
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    db.metric.df = pl.DataFrame({"id": ["a"], "count": [3.0]})
+
+    assert db.metric.df.schema["count"] == pl.Int64
+    assert db.metric.get("a") == {"id": "a", "count": 3}
+
+
+def test_df_setter_rejects_an_unstorable_frame_and_leaves_the_table_intact():
+    class Metric(TypedDict):
+        id: str
+        count: Optional[int]
+
+    class MetricDB(Jsonjsdb):
+        metric: Table[Metric]
+
+    db = MetricDB()
+    db.metric.add({"id": "a", "count": 1})
+    before = db.metric.all()
+
+    with pytest.raises(ValueError, match="non-integer values"):
+        db.metric.df = pl.DataFrame({"id": ["b"], "count": [2.5]})
+
+    assert db.metric.all() == before
+
+
+def test_df_setter_output_is_saved(tmp_path: Path):
+    db = _ItemDB()
+    db.item.add_all([{"id": "a", "v": 1}, {"id": "b", "v": 2}])
+    db.item.df = db.item.df.with_columns(v=pl.col("v") * 10)
+    db.save(tmp_path, timestamp=_SAVE_TIMESTAMP)
+
+    assert _ItemDB(tmp_path).item.all() == [
+        {"id": "a", "v": 10},
+        {"id": "b", "v": 20},
+    ]

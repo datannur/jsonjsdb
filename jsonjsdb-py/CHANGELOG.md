@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.3
+
+add: `Table.df` setter — `table.df = f(table.df)` replaces the whole frame, flushing the append buffer, rebuilding the id index and applying the storage schema
+
 ## 0.9.2
 
 perf: Buffer `Table.add()` / `add_all()` / `upsert()` inserts into a single concat — repeated appends are linear, not quadratic (~140x on a 2000-dataset scan)

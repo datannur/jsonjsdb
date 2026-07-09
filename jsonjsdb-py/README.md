@@ -234,6 +234,24 @@ table.get_persistable_df()        # → DataFrame without _seen
 # On save(), runtime_fields are automatically excluded
 ```
 
+## DataFrame Access
+
+Inserts are buffered and materialized on the next read, so reach the underlying
+Polars DataFrame through `table.df` rather than any internal attribute. Reading it
+flushes pending rows; assigning to it replaces the whole frame, rebuilds the id
+index and applies the entity's storage schema.
+
+```python
+table.df                                        # → DataFrame, buffered rows included
+table.df = table.df.with_columns(...)           # add computed columns
+table.df = table.df.join(other, on="id")        # join metadata in
+table.df = table.df.filter(pl.col("keep"))      # drop rows
+```
+
+Rows still buffered when a frame is assigned are replaced by it, as they would be
+by any whole-frame overwrite. A frame the storage schema rejects raises and leaves
+the table untouched.
+
 ## File Format
 
 - `__table__.json` — Index of tables with metadata
