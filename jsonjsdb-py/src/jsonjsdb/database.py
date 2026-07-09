@@ -24,6 +24,7 @@ from .writer import (
     load_json_hashes,
     save_json_hashes,
     table_index_df,
+    validate_df_for_write,
     write_table_json_pair,
 )
 
@@ -141,6 +142,11 @@ class Jsonjsdb:
             raise ValueError(
                 "No path specified. Provide a path or load from an existing database first."
             )
+
+        # Reject unrepresentable data up front: a table failing halfway through
+        # would leave the export half rewritten.
+        for table in self._tables.values():
+            validate_df_for_write(table.get_persistable_df())
 
         save_path.mkdir(parents=True, exist_ok=True)
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2
+
+perf: Buffer `Table.add()` / `add_all()` / `upsert()` inserts into a single concat — repeated appends are linear, not quadratic (~140x on a 2000-dataset scan)
+fix: `Table.upsert_all()` appended new ids in a nondeterministic order, so identical data could save to different `.json` files and hashes
+fix: `save()` silently split a string list value containing a comma into several on reload; it now raises, before writing anything
+
 ## 0.9.1
 
 fix: Serialize numeric list columns (e.g. `bbox`) as native JSON arrays instead of comma-separated strings; `List(Utf8)` columns (e.g. `*_ids`) stay CSV-encoded. NaN inside float lists is written as `null`.
