@@ -260,13 +260,13 @@ export default class Jsonjsdb<
     const tableData = this.tables[table]
     if (!Array.isArray(tableData)) return []
 
-    let all: TEntityTypeMap[K][] = []
+    const all: TEntityTypeMap[K][] = []
     if (!itemId) {
       console.error('getAllChilds()', table, 'id', itemId)
       return all
     }
     const childs = this.getAll(table, { [table]: itemId })
-    all = all.concat(childs)
+    for (const child of childs) all.push(child)
     for (const child of childs) {
       const childRow = child
       if (itemId === childRow.id) {
@@ -275,7 +275,7 @@ export default class Jsonjsdb<
         return all
       }
       const newChilds = this.getAllChilds(table, childRow.id as string | number)
-      all = all.concat(newChilds)
+      for (const newChild of newChilds) all.push(newChild)
     }
     return all
   }
@@ -837,6 +837,7 @@ export default class Jsonjsdb<
     relationField?: string,
   ): AddRelationsResult {
     const added: Array<string | number> = []
+    const addedKeys = new Set<string>()
     const ignored: Array<string | number> = []
 
     for (const relatedId of relatedIds) {
@@ -849,7 +850,7 @@ export default class Jsonjsdb<
 
       const alreadyExists =
         this.hasRelation(table, id, relatedTable, relatedId, relationField) ||
-        added.some(addedId => this.sameId(addedId, relatedId))
+        addedKeys.has(String(relatedId))
 
       if (alreadyExists) {
         if (ifExists === 'ignore') {
@@ -861,6 +862,7 @@ export default class Jsonjsdb<
       }
 
       added.push(relatedId)
+      addedKeys.add(String(relatedId))
     }
 
     return { added, ignored }
@@ -880,9 +882,11 @@ export default class Jsonjsdb<
     relatedIds: Array<string | number>,
   ): void {
     const ids = this.parseIds(row[relationField])
+    const idKeys = new Set(ids.map(String))
     for (const relatedId of relatedIds) {
-      if (ids.some(id => this.sameId(id, relatedId))) continue
+      if (idKeys.has(String(relatedId))) continue
       ids.push(relatedId)
+      idKeys.add(String(relatedId))
     }
     row[relationField] = this.serializeIds(ids)
   }

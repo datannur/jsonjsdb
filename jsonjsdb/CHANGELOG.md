@@ -1,5 +1,13 @@
 # jsonjsdb
 
+## 0.12.6 (2026-07-13)
+
+- perf: compute `addMeta()` variable statistics in a single row-major pass instead of two column-major scans per column, roughly halving metadata computation time on large tables (identical output, including the empty-string and `NaN` type-inference edge cases, now covered by tests)
+- perf: replace the array-membership scans in `filter()` with `Set` lookups, making init-time filters linear instead of quadratic (measured ~1000× faster when deleting 10k of 50k rows)
+- perf: iterate rows with indexed loops instead of `Object.entries()` + `parseInt()` when building indexes, making `createIndex()` ~40% faster on large tables
+- perf: track already-planned and already-present relation ids with `Set`s in `addRelations()`, making large batches linear instead of quadratic (~75× faster for a 10k-id batch)
+- perf: accumulate `getAllChilds()` results with pushes instead of per-level `concat()` reallocations
+
 ## 0.12.5 (2026-07-12)
 
 - fix: publish TypeScript declarations at the package paths declared in `package.json` again, using a dedicated `tsconfig.build.json` so the inferred `rootDir` no longer nests them under `dist/src/` (regression introduced by the `vite-plugin-dts` 5.0.2 update, affecting 0.12.3 and 0.12.4)

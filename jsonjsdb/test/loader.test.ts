@@ -135,6 +135,111 @@ describe('Loader', () => {
     })
   })
 
+  describe('addMetaVariables()', () => {
+    const getVar = (id: string) =>
+      loader.db.metaVariable.find((v: Record<string, unknown>) => v.id === id)
+
+    beforeEach(() => {
+      loader.db.metaVariable = []
+    })
+
+    it('infers type from an empty string but counts it as missing', () => {
+      loader.addMetaVariables('t', [{ v: '' }, { v: 3 }], ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        type: 'string',
+        nbMissing: 1,
+        nbDistinct: 1,
+        nbDuplicate: 0,
+      })
+    })
+
+    it('types an all-empty-string column as string with zero distinct', () => {
+      loader.addMetaVariables('t', [{ v: '' }, { v: '' }], ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        type: 'string',
+        nbMissing: 2,
+        nbDistinct: 0,
+        nbDuplicate: 0,
+        values: false,
+      })
+    })
+
+    it('skips null and undefined when inferring type', () => {
+      loader.addMetaVariables('t', [{ v: null }, { v: 42 }], ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        type: 'integer',
+        nbMissing: 1,
+        nbDistinct: 1,
+      })
+    })
+
+    it('skips NaN when inferring type but counts it as a distinct value', () => {
+      loader.addMetaVariables('t', [{ v: NaN }, { v: 1.5 }, { v: NaN }], ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        type: 'float',
+        nbMissing: 0,
+        nbDistinct: 2,
+        nbDuplicate: 1,
+      })
+    })
+
+    it('skips object values when inferring type', () => {
+      loader.addMetaVariables('t', [{ v: { a: 1 } }, { v: 'x' }], ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        type: 'string',
+        nbMissing: 0,
+        nbDistinct: 2,
+      })
+    })
+
+    it('falls back to other when no value resolves a type', () => {
+      loader.addMetaVariables('t', [{ v: null }, { v: undefined }], ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        type: 'other',
+        nbMissing: 2,
+        nbDistinct: 0,
+      })
+    })
+
+    it('detects boolean columns', () => {
+      loader.addMetaVariables('t', [{ v: true }, { v: false }], ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        type: 'boolean',
+        nbDistinct: 2,
+      })
+    })
+
+    it('lists distinct values in first-appearance order below the cap', () => {
+      const rows = Array.from({ length: 15 }, (_, i) => ({
+        v: i % 2 === 0 ? 'b' : 'a',
+      }))
+      loader.addMetaVariables('t', rows, ['v'])
+      expect(getVar('t---v')).toMatchObject({
+        nbDistinct: 2,
+        values: [{ value: 'b' }, { value: 'a' }],
+        valuesPreview: [{ value: 'b' }, { value: 'a' }],
+      })
+    })
+
+    it('handles several columns independently, missing keys included', () => {
+      loader.addMetaVariables(
+        't',
+        [{ a: 1, b: 'x' }, { a: 2.5, b: 'y' }, { a: 3 }],
+        ['a', 'b'],
+      )
+      expect(getVar('t---a')).toMatchObject({
+        type: 'integer',
+        nbMissing: 0,
+        nbDistinct: 3,
+      })
+      expect(getVar('t---b')).toMatchObject({
+        type: 'string',
+        nbMissing: 1,
+        nbDistinct: 2,
+      })
+    })
+  })
+
   describe('arrayToObject()', () => {
     it('should convert matrix data into objects', async () => {
       await loader.load(path)
