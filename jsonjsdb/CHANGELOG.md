@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.12.4 (2026-07-12)
+
+- fix: scan the smaller of the two index sides in `hasRelation()` and skip the redundant duplicate check when appending relation positions to the index, removing the remaining quadratic behavior of repeated relation inserts
+
 ## 0.12.3 (2026-07-12)
 
 - fix: replace the full relation-table scan in `hasRelation()` with an index lookup, making repeated `addRelation()`/`addRelations()` calls linear instead of quadratic
