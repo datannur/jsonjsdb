@@ -784,19 +784,14 @@ export default class Jsonjsdb<
       }
     }
 
-    const relationTableName = this.relationTableName(table, relatedTable)
-    const relationTable = (this.tables as Record<string, DatabaseRow[]>)[
-      relationTableName
-    ]
-    if (!Array.isArray(relationTable)) return false
-
-    const tableKey = table + this.idSuffix
-    const relatedKey = relatedTable + this.idSuffix
-    return relationTable.some(
-      row =>
-        this.sameId(row[tableKey], id) &&
-        this.sameId(row[relatedKey], relatedId),
-    )
+    const positions =
+      this.metadata.index[table]?.[relatedTable + this.idSuffix]?.[relatedId]
+    if (positions === undefined) return false
+    const sourcePosition = this.metadata.index[table]?.id?.[id]
+    if (typeof sourcePosition !== 'number') return false
+    return Array.isArray(positions)
+      ? positions.includes(sourcePosition)
+      : positions === sourcePosition
   }
 
   private planRelations(
