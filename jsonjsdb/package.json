@@ -1,6 +1,6 @@
 {
   "name": "jsonjsdb",
-  "version": "0.12.4",
+  "version": "0.12.5",
   "description": "Jsonjsdb database",
   "type": "module",
   "license": "MIT",
@@ -35,6 +35,7 @@
   "typings": "dist/Jsonjsdb.d.ts",
   "scripts": {
     "build": "vite build",
+    "postbuild": "node -e \"const t=require('./package.json').types;if(!require('fs').existsSync(t)){console.error('declared types file missing from build output: '+t);process.exit(1)}\"",
     "dev": "vitest",
     "test": "vitest run",
     "test:ui": "vitest --ui",

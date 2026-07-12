@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.12.5 (2026-07-12)
+
+- fix: publish TypeScript declarations at the package paths declared in `package.json` again, using a dedicated `tsconfig.build.json` so the inferred `rootDir` no longer nests them under `dist/src/` (regression introduced by the `vite-plugin-dts` 5.0.2 update, affecting 0.12.3 and 0.12.4)
+
 ## 0.12.4 (2026-07-12)
 
 - fix: scan the smaller of the two index sides in `hasRelation()` and skip the redundant duplicate check when appending relation positions to the index, removing the remaining quadratic behavior of repeated relation inserts
