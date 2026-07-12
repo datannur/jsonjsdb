@@ -1,5 +1,9 @@
 # jsonjsdb
 
+## 0.12.3 (2026-07-12)
+
+- fix: replace the full relation-table scan in `hasRelation()` with an index lookup, making repeated `addRelation()`/`addRelations()` calls linear instead of quadratic
+
 ## 0.12.2 (2026-06-04)
 
 - add: addForeignKey() method to add foreign key indexes to existing objects
