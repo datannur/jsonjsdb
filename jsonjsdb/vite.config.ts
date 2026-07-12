@@ -12,7 +12,9 @@ export default defineConfig({
     },
     silent: true,
   },
-  plugins: [dts({ entryRoot: 'src', include: ['src'] })],
+  // the dedicated build tsconfig sets an explicit rootDir so declarations
+  // land at dist/*.d.ts, where package.json points (checked by postbuild)
+  plugins: [dts({ tsconfigPath: 'tsconfig.build.json' })],
   build: {
     minify: 'terser',
     sourcemap: true,
