@@ -669,6 +669,25 @@ export default class Jsonjsdb<
     if (bucket !== position) index[key] = [bucket, position]
   }
 
+  private pushPositionToIndex(
+    index: IndexRecord,
+    key: string | number,
+    position: number,
+  ): void {
+    if (!(key in index)) {
+      index[key] = position
+      return
+    }
+
+    const bucket = index[key]
+    if (Array.isArray(bucket)) {
+      bucket.push(position)
+      return
+    }
+
+    index[key] = [bucket, position]
+  }
+
   private relationFieldToTable(relationField: string): string {
     return this.resolveRelationField(relationField).toTable
   }
@@ -732,12 +751,14 @@ export default class Jsonjsdb<
       [table + this.idSuffix]: id,
       [relatedTable + this.idSuffix]: relatedId,
     })
-    this.addPositionToIndex(
+    // hasRelation() returned false above, so the pair is absent from both
+    // index sides: push without the linear duplicate check
+    this.pushPositionToIndex(
       this.ensureIndex(table, relatedTable + this.idSuffix),
       relatedId,
       sourcePosition,
     )
-    this.addPositionToIndex(
+    this.pushPositionToIndex(
       this.ensureIndex(relatedTable, table + this.idSuffix),
       id,
       relatedPosition,
@@ -784,14 +805,27 @@ export default class Jsonjsdb<
       }
     }
 
-    const positions =
-      this.metadata.index[table]?.[relatedTable + this.idSuffix]?.[relatedId]
-    if (positions === undefined) return false
-    const sourcePosition = this.metadata.index[table]?.id?.[id]
+    const index = this.metadata.index
+    const sourceBucket =
+      index[table]?.[relatedTable + this.idSuffix]?.[relatedId]
+    if (sourceBucket === undefined) return false
+    const relatedBucket = index[relatedTable]?.[table + this.idSuffix]?.[id]
+    if (relatedBucket === undefined) return false
+    const sourcePosition = index[table]?.id?.[id]
+    const relatedPosition = index[relatedTable]?.id?.[relatedId]
     if (typeof sourcePosition !== 'number') return false
-    return Array.isArray(positions)
-      ? positions.includes(sourcePosition)
-      : positions === sourcePosition
+    if (typeof relatedPosition !== 'number') return false
+
+    // both index sides hold the same pairs: scan the smaller bucket
+    const sourceSize = Array.isArray(sourceBucket) ? sourceBucket.length : 1
+    const relatedSize = Array.isArray(relatedBucket) ? relatedBucket.length : 1
+    const [bucket, position] =
+      sourceSize <= relatedSize
+        ? [sourceBucket, sourcePosition]
+        : [relatedBucket, relatedPosition]
+    return Array.isArray(bucket)
+      ? bucket.includes(position)
+      : bucket === position
   }
 
   private planRelations(
