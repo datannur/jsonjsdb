@@ -336,12 +336,10 @@ export default class Loader {
       this.tableIndexCache = (await this.browser.get(
         this.cachePrefix + this.tableIndex,
       )) as Record<string, string | number | undefined>
-      const newTableIndexCache = tablesInfo.reduce(
-        (acc, item) => {
-          return { ...acc, [item.name]: item.lastModif }
-        },
-        {} as Record<string, string | number | undefined>,
-      )
+      const newTableIndexCache: Record<string, string | number | undefined> = {}
+      for (const item of tablesInfo) {
+        newTableIndexCache[item.name] = item.lastModif
+      }
       this.saveToCache(newTableIndexCache, this.tableIndex)
     }
 
@@ -389,17 +387,17 @@ export default class Loader {
 
   checkConformity(tablesInfo: TableInfo[]): TableInfo[] {
     const validatedTables: TableInfo[] = []
-    const allNames: string[] = []
+    const allNames = new Set<string>()
     for (const table of tablesInfo) {
       if (!('name' in table)) {
         console.error('table name not found in meta', table)
         continue
       }
-      if (allNames.includes(table.name)) {
+      if (allNames.has(table.name)) {
         console.error('table name already exists in meta', table)
         continue
       }
-      allNames.push(table.name)
+      allNames.add(table.name)
       validatedTables.push(table)
     }
     return validatedTables
@@ -439,36 +437,36 @@ export default class Loader {
     if (!('values' in filter) || !filter.values) return false
     if (!(filter.entity in this.db)) return false
 
-    const idToDelete: string[] = []
+    const idToDelete = new Set<string>()
     for (const item of this.db[filter.entity]) {
       if (filter.values.includes(item[filter.variable])) {
         if (item.id !== undefined && item.id !== null) {
-          idToDelete.push(String(item.id))
+          idToDelete.add(String(item.id))
         }
       }
     }
     this.db[filter.entity] = this.db[filter.entity].filter(
-      (item: Record<string, unknown>) => !idToDelete.includes(String(item.id)),
+      (item: Record<string, unknown>) => !idToDelete.has(String(item.id)),
     )
     for (const table of this.metadata.tables) {
       if (this.db[table.name].length === 0) continue
       if (!(filter.entity + this.idSuffix in this.db[table.name][0])) continue
-      const idToDeleteLevel2: string[] = []
+      const idToDeleteLevel2 = new Set<string>()
       for (const item of this.db[table.name]) {
         const foreignId = item[filter.entity + this.idSuffix]
         if (
           foreignId !== undefined &&
           foreignId !== null &&
-          idToDelete.includes(String(foreignId))
+          idToDelete.has(String(foreignId))
         ) {
           if (item.id !== undefined && item.id !== null) {
-            idToDeleteLevel2.push(String(item.id))
+            idToDeleteLevel2.add(String(item.id))
           }
         }
       }
       this.db[table.name] = this.db[table.name].filter(
         (item: Record<string, unknown>) =>
-          !idToDelete.includes(String(item[filter.entity + this.idSuffix])),
+          !idToDelete.has(String(item[filter.entity + this.idSuffix])),
       )
       for (const tableLevel2 of this.metadata.tables) {
         if (this.db[tableLevel2.name].length === 0) continue
@@ -476,9 +474,7 @@ export default class Loader {
           continue
         this.db[tableLevel2.name] = this.db[tableLevel2.name].filter(
           (item: Record<string, unknown>) =>
-            !idToDeleteLevel2.includes(
-              String(item[table.name + this.idSuffix]),
-            ),
+            !idToDeleteLevel2.has(String(item[table.name + this.idSuffix])),
         )
       }
     }
@@ -584,17 +580,19 @@ export default class Loader {
 
       const index: Record<string, number | number[]> = {}
       const reverseIndex: Record<string, number | number[]> = {}
-      for (const [i, row] of Object.entries(this.db[table.name])) {
+      const rows = this.db[table.name]
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i]
         const rowRecord = row as Record<string, unknown>
         const ids = this.parseIds(rowRecord[variable])
         for (const id of ids) {
           if (!(id in index)) {
-            index[id] = parseInt(i)
+            index[id] = i
           } else {
             if (!Array.isArray(index[id])) {
               index[id] = [index[id] as number]
             }
-            ;(index[id] as number[]).push(parseInt(i))
+            ;(index[id] as number[]).push(i)
           }
 
           const relatedIndex = this.idToIndex(relation.toTable, id)
@@ -619,17 +617,18 @@ export default class Loader {
 
   processSelfOneToMany(table: { name: string }) {
     const index: Record<string | number, number | number[]> = {}
-    for (const [i, row] of Object.entries(this.db[table.name])) {
-      const rowRecord = row as Record<string, unknown>
+    const rows = this.db[table.name]
+    for (let i = 0; i < rows.length; i += 1) {
+      const rowRecord = rows[i] as Record<string, unknown>
       const parentId = rowRecord['parent' + this.idSuffix] as string | number
       if (!(parentId in index)) {
-        index[parentId] = parseInt(i)
+        index[parentId] = i
         continue
       }
       if (!Array.isArray(index[parentId])) {
         index[parentId] = [index[parentId] as number]
       }
-      ;(index[parentId] as number[]).push(parseInt(i))
+      ;(index[parentId] as number[]).push(i)
     }
     this.metadata.index[table.name]['parent' + this.idSuffix] = index
     this.metadata.schema.oneToMany.push([table.name, table.name])
@@ -640,27 +639,29 @@ export default class Loader {
     if (!(table.name in this.db)) return false
     if (this.db[table.name].length === 0) return false
     if (!('id' in this.db[table.name][0])) return false
-    for (const [i, row] of Object.entries(this.db[table.name])) {
-      const rowRecord = row as Record<string, unknown>
+    const rows = this.db[table.name]
+    for (let i = 0; i < rows.length; i += 1) {
+      const rowRecord = rows[i] as Record<string, unknown>
       const id = rowRecord.id as string | number
-      index[id] = parseInt(i)
+      index[id] = i
     }
     this.metadata.index[table.name].id = index
   }
 
   addForeignKey(variable: string, table: { name: string }) {
     const index: Record<string, number | number[]> = {}
-    for (const [i, row] of Object.entries(this.db[table.name])) {
-      const rowRecord = row as Record<string, unknown>
+    const rows = this.db[table.name]
+    for (let i = 0; i < rows.length; i += 1) {
+      const rowRecord = rows[i] as Record<string, unknown>
       const foreignKeyValue = rowRecord[variable] as string
       if (!(foreignKeyValue in index)) {
-        index[foreignKeyValue] = parseInt(i)
+        index[foreignKeyValue] = i
         continue
       }
       if (!Array.isArray(index[foreignKeyValue])) {
         index[foreignKeyValue] = [index[foreignKeyValue] as number]
       }
-      ;(index[foreignKeyValue] as number[]).push(parseInt(i))
+      ;(index[foreignKeyValue] as number[]).push(i)
     }
     delete index['null']
     this.metadata.index[table.name][variable] = index
@@ -918,41 +919,39 @@ export default class Loader {
   ) {
     const datasetArray = datasetData as unknown[]
     const nbValueMax = Math.min(300, Math.floor(datasetArray.length / 5))
-    for (const variable of variables) {
-      let type = 'other'
-      for (const row of datasetData) {
-        const rowRecord = row as Record<string, unknown>
-        const value = rowRecord[variable]
-        if (value === null || value === undefined) continue
-        if (typeof value === 'string') {
-          type = 'string'
-          break
-        }
-        if (typeof value === 'number' && !isNaN(value)) {
-          if (Number.isInteger(value)) {
-            type = 'integer'
-            break
-          } else {
-            type = 'float'
-            break
+    const accumulators = variables.map(variable => ({
+      variable,
+      type: 'other',
+      typeResolved: false,
+      nbMissing: 0,
+      distincts: new Set<unknown>(),
+    }))
+    for (const row of datasetData) {
+      const rowRecord = row as Record<string, unknown>
+      for (const acc of accumulators) {
+        const value = rowRecord[acc.variable]
+        // type inference skips null/undefined but not '': an empty string
+        // resolves the type as string even though the stats count it missing
+        if (!acc.typeResolved && value !== null && value !== undefined) {
+          if (typeof value === 'string') {
+            acc.type = 'string'
+            acc.typeResolved = true
+          } else if (typeof value === 'number' && !isNaN(value)) {
+            acc.type = Number.isInteger(value) ? 'integer' : 'float'
+            acc.typeResolved = true
+          } else if (typeof value === 'boolean') {
+            acc.type = 'boolean'
+            acc.typeResolved = true
           }
         }
-        if (typeof value === 'boolean') {
-          type = 'boolean'
-          break
-        }
-      }
-      let nbMissing = 0
-      const distincts = new Set()
-      for (const row of datasetData) {
-        const rowRecord = row as Record<string, unknown>
-        const value = rowRecord[variable]
         if (value === '' || value === null || value === undefined) {
-          nbMissing += 1
+          acc.nbMissing += 1
           continue
         }
-        distincts.add(value)
+        acc.distincts.add(value)
       }
+    }
+    for (const { variable, type, nbMissing, distincts } of accumulators) {
       let values: boolean | Array<{ value: unknown }> = false
       const hasValue = distincts.size < nbValueMax && distincts.size > 0
       if (hasValue) {
