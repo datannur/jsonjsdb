@@ -1264,6 +1264,81 @@ class TestParentRelationsConfig:
             assert evolution[0]["entity_id"] == "ds_2"
 
 
+class TestEvolutionExclude:
+    """Tests for evolution_exclude in save()."""
+
+    def test_compare_datasets_exclude_skips_entity(self):
+        """compare_datasets should return no entries for excluded entities."""
+        old_df = pl.DataFrame({"id": [1], "value": ["a"]})
+        new_df = pl.DataFrame({"id": [1, 2], "value": ["b", "c"]})
+
+        excluded = compare_datasets(
+            old_df, new_df, 1234567890, "frequency", exclude={"frequency"}
+        )
+        assert excluded == []
+
+        # A non-excluded entity with the same change still produces entries.
+        kept = compare_datasets(
+            old_df, new_df, 1234567890, "variable", exclude={"frequency"}
+        )
+        assert len(kept) == 2  # one update, one add
+
+    def test_save_excludes_table_from_evolution(self):
+        """Excluded tables emit no add/update/delete entries but export normally.
+
+        A non-excluded table changed in the same save must still be tracked
+        (no over-filtering).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir)
+
+            # Initial data for both tables.
+            db1 = Jsonjsdb()
+            db1._tables["variable"] = Table("variable", db1)
+            db1._tables["frequency"] = Table("frequency", db1)
+            db1["variable"]._df = pl.DataFrame({"id": ["v1"], "name": ["Var 1"]})
+            db1["frequency"]._df = pl.DataFrame(
+                {
+                    "id": ["f1", "f2"],
+                    "variable_id": ["v1", "v1"],
+                    "value": ["a", "b"],
+                    "frequency": [10, 20],
+                }
+            )
+            db1.save(path, track_evolution=False)
+
+            # Change both tables: update in variable, and update/add/delete in
+            # frequency (count change, new modality, disappearing modality).
+            db2 = Jsonjsdb(path)
+            db2["variable"]._df = pl.DataFrame({"id": ["v1"], "name": ["Var 1 bis"]})
+            db2["frequency"]._df = pl.DataFrame(
+                {
+                    "id": ["f1", "f3"],
+                    "variable_id": ["v1", "v1"],
+                    "value": ["a", "c"],
+                    "frequency": [15, 5],  # f1 count changed, f2 gone, f3 new
+                }
+            )
+            db2.save(path, evolution_exclude={"frequency"})
+
+            # Evolution has only the variable update, nothing for frequency.
+            with open(path / "evolution.json") as f:
+                evolution = json.load(f)
+            assert all(e["entity"] != "frequency" for e in evolution)
+            assert [e["entity"] for e in evolution] == ["variable"]
+            assert evolution[0]["type"] == "update"
+            assert evolution[0]["new_value"] == "Var 1 bis"
+
+            # frequency is still exported and up to date.
+            assert (path / "frequency.json").exists()
+            assert (path / "frequency.json.js").exists()
+            with open(path / "frequency.json") as f:
+                freq = json.load(f)
+            freq_ids = {row["id"] for row in freq}
+            assert freq_ids == {"f1", "f3"}
+            assert next(r for r in freq if r["id"] == "f1")["frequency"] == 15
+
+
 class TestCamelCaseFKEdgeCases:
     """Edge case tests for camelCase FK detection."""
 

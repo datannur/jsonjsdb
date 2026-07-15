@@ -164,6 +164,7 @@ def compare_datasets(
     timestamp: int,
     entity: str,
     parent_relations: dict[str, str] | None = None,
+    exclude: set[str] | None = None,
 ) -> list[EvolutionEntry]:
     """Compare two datasets and return list of evolution entries.
 
@@ -173,6 +174,7 @@ def compare_datasets(
         timestamp: Unix timestamp in seconds
         entity: Table/entity name
         parent_relations: Mapping of child_table -> parent_table for cascade filtering
+        exclude: Table/entity names to skip entirely (no add/update/delete entries)
 
     Returns:
         List of EvolutionEntry objects describing the changes
@@ -180,6 +182,9 @@ def compare_datasets(
     entries: list[EvolutionEntry] = []
 
     if entity.startswith("__"):
+        return entries
+
+    if exclude and entity in exclude:
         return entries
 
     # Skip tracking for initial creation (no previous data)
