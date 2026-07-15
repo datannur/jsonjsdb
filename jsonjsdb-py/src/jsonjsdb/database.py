@@ -121,6 +121,7 @@ class Jsonjsdb:
         timestamp: int | None = None,
         write_js: bool = True,
         parent_relations: dict[str, str] | None = None,
+        evolution_exclude: set[str] | None = None,
     ) -> None:
         """Save all tables to disk with optional evolution tracking.
 
@@ -135,6 +136,10 @@ class Jsonjsdb:
             write_js: If True, write both .json and .json.js (default: True)
             parent_relations: Child->parent table mapping for cascade filtering
                 Example: {"variable": "dataset", "freq": "variable"}
+            evolution_exclude: Table names to exclude entirely from evolution
+                tracking. Excluded tables are still exported normally (json /
+                json.js), but never produce add/update/delete evolution entries.
+                Example: {"frequency"}
         """
         save_path = Path(path) if path else self._path
 
@@ -173,10 +178,18 @@ class Jsonjsdb:
             def track_table_evolution(data_changed: bool) -> None:
                 if not track_evolution or not data_changed:
                     return
+                if evolution_exclude and name in evolution_exclude:
+                    # Skip the disk read of the old table for excluded tables.
+                    return
 
                 old_df = self._get_old_table(save_path, name, same_path)
                 entries = compare_datasets(
-                    old_df, persistable_df, ts, name, parent_relations
+                    old_df,
+                    persistable_df,
+                    ts,
+                    name,
+                    parent_relations,
+                    evolution_exclude,
                 )
                 new_entries.extend(entries)
 

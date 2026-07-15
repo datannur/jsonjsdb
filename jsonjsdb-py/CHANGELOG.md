@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.4
+
+add: `save(evolution_exclude={...})` — exclude tables from evolution tracking entirely (no add/update/delete entries) while still exporting them normally; defaults to no exclusions, so existing behaviour is unchanged
+
 ## 0.9.3
 
 add: `Table.df` setter — `table.df = f(table.df)` replaces the whole frame, flushing the append buffer, rebuilding the id index and applying the storage schema
